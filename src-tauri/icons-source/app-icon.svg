@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Charcoal squircle with slight top-to-bottom shift for subtle depth. -->
+    <linearGradient id="bg" x1="512" y1="0" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2c2c2e" />
+      <stop offset="1" stop-color="#1a1a1c" />
+    </linearGradient>
+    <!-- Soft top-edge highlight — the macOS "lit glass" feel. -->
+    <linearGradient id="topGloss" x1="0" y1="0" x2="0" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="white" stop-opacity="0.10" />
+      <stop offset="1" stop-color="white" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle background. rx=230 ≈ macOS Big Sur+ icon corner.   -->
+  <rect width="1024" height="1024" rx="230" ry="230" fill="url(#bg)" />
+  <rect width="1024" height="1024" rx="230" ry="230" fill="url(#topGloss)" />
+
+  <!-- 5-bar waveform centred. Bars carry the warm amber-honey brand
+       colour; same ratios as the tray icon and the dictation overlay so
+       all surfaces read as one product. -->
+  <defs>
+    <linearGradient id="bar" x1="512" y1="307" x2="512" y2="717" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFCB85" />
+      <stop offset="1" stop-color="#E8A961" />
+    </linearGradient>
+  </defs>
+  <g fill="url(#bar)">
+    <rect x="256" y="440" width="64" height="144" rx="32" />
+    <rect x="368" y="378" width="64" height="268" rx="32" />
+    <rect x="480" y="307" width="64" height="410" rx="32" />
+    <rect x="592" y="378" width="64" height="268" rx="32" />
+    <rect x="704" y="440" width="64" height="144" rx="32" />
+  </g>
+
+  <!-- Hairline inner stroke for the icon to feel more crisp at small sizes. -->
+  <rect x="0.5" y="0.5" width="1023" height="1023" rx="229.5" ry="229.5"
+        fill="none" stroke="white" stroke-opacity="0.06" stroke-width="1" />
+</svg>

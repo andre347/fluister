@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local Whisper</title>
+    <link rel="stylesheet" href="/src/popover.css" />
+    <script type="module" src="/src/popover.ts" defer></script>
+  </head>
+  <body>
+    <div class="popover">
+      <div class="menu-section">
+        <div class="menu-caption">Recent</div>
+        <div id="recents" class="menu-list scrollable">
+          <div class="menu-empty">Loading…</div>
+        </div>
+      </div>
+
+      <div class="menu-separator"></div>
+
+      <div class="menu-section">
+        <button type="button" class="menu-item" data-action="open-history">Open History</button>
+        <button type="button" class="menu-item" data-action="open-settings">Settings</button>
+      </div>
+
+      <div class="menu-separator"></div>
+
+      <div class="menu-section">
+        <div class="menu-item disabled" id="app-version">Fluister</div>
+        <div class="menu-item disabled" id="update-status">Latest version</div>
+        <button type="button" class="menu-item" data-action="check-updates">Check for updates</button>
+      </div>
+
+      <div class="menu-separator"></div>
+
+      <div class="menu-section">
+        <button type="button" class="menu-item" data-action="quit">Quit Fluister</button>
+      </div>
+    </div>
+  </body>
+</html>

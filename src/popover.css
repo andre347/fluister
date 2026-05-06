@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas:    light-dark(#f5f5f7, #1c1c1e);
+  --color-fg:        light-dark(#1d1d1f, #f5f5f7);
+  --color-muted:     light-dark(rgba(0, 0, 0, 0.55), rgba(245, 245, 247, 0.55));
+  --color-faint:     light-dark(rgba(0, 0, 0, 0.36), rgba(245, 245, 247, 0.36));
+  --color-separator: light-dark(rgba(0, 0, 0, 0.10), rgba(255, 255, 255, 0.08));
+  --color-hover:     light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.07));
+  --color-success:   #34c759;
+  --color-accent:    light-dark(#E8A961, #F2B570);
+
+  --text-item: 14px;
+  --text-meta: 12px;
+
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+}
+
+:root            { color-scheme: light dark; }
+html[data-theme="light"] { color-scheme: light; }
+html[data-theme="dark"]  { color-scheme: dark; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  background: transparent !important;
+  color: var(--color-fg);
+  font-family: var(--font-system);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* === Popover container === */
+.popover {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: light-dark(rgba(245, 245, 247, 0.78), rgba(28, 28, 30, 0.80));
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-radius: 12px;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.10), rgba(255, 255, 255, 0.08));
+  overflow: hidden;
+  position: relative;
+  animation: pop-in 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Subtle inner highlight at the very top — "lit glass" */
+.popover::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 22%);
+}
+
+/* === Sections === */
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.menu-caption {
+  padding: 6px 16px 2px;
+  font-size: var(--text-meta);
+  font-weight: 500;
+  color: var(--color-faint);
+}
+
+.menu-separator {
+  height: 1px;
+  background: var(--color-separator);
+  margin: 0 12px;
+}
+
+/* === Menu list (Recents) === */
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.menu-list::-webkit-scrollbar { width: 6px; }
+.menu-list::-webkit-scrollbar-thumb {
+  background: light-dark(rgba(0, 0, 0, 0.18), rgba(255, 255, 255, 0.10));
+  border-radius: 6px;
+}
+.menu-list::-webkit-scrollbar-track { background: transparent; }
+
+.menu-empty {
+  padding: 12px 16px;
+  font-size: var(--text-meta);
+  color: var(--color-faint);
+  text-align: center;
+}
+
+/* === Menu item — the universal row component ===
+   Buttons and divs use the same class so the visual hierarchy is uniform. */
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 16px;
+  font-size: var(--text-item);
+  font-weight: 400;
+  font-family: inherit;
+  color: var(--color-fg);
+  cursor: default;
+  line-height: 1.3;
+  transition: background-color 80ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+button.menu-item:hover:not(.disabled) {
+  background: var(--color-hover);
+}
+
+.menu-item.disabled {
+  color: var(--color-faint);
+  pointer-events: none;
+}
+
+/* Recent rows have a primary line + meta line */
+.menu-item.recent {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.menu-item.recent .text {
+  display: block;
+  font-size: var(--text-item);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-item.recent .meta {
+  display: block;
+  font-size: var(--text-meta);
+  color: var(--color-muted);
+  margin-top: 1px;
+}
+
+/* Click-to-copy feedback flash for recents */
+.menu-item.recent.flash {
+  background: color-mix(in oklch, var(--color-success) 26%, transparent);
+}
+.menu-item.recent.flash .meta::after {
+  content: " · Copied";
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+/* "Checking…" state on the update-status row uses an italic feel */
+.menu-item.checking {
+  color: var(--color-muted);
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
