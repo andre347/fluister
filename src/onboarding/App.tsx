@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   ArrowRight,
   Check,
   ChevronLeft,
   ExternalLink,
+  FolderOpen,
+  HardDrive,
 } from "lucide-react";
 import {
   commands,
@@ -13,6 +16,7 @@ import {
   type ModelInfo,
   type OllamaModel,
   type OnboardingStatus,
+  type VaultStatus,
 } from "../lib/tauri";
 import {
   useTauriEvent,
@@ -25,13 +29,14 @@ import { cn } from "../lib/utils";
 
 const STATUS_POLL_MS = 1500;
 
-type StepId = 0 | 1 | 2 | 3;
+type StepId = 0 | 1 | 2 | 3 | 4;
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: 0, label: "Permissions" },
   { id: 1, label: "Model" },
   { id: 2, label: "AI cleanup" },
-  { id: 3, label: "Done" },
+  { id: 3, label: "Storage" },
+  { id: 4, label: "Done" },
 ];
 
 type ModelSize = "tiny" | "base" | "small" | "medium";
@@ -68,6 +73,11 @@ export function App() {
   const [micRequesting, setMicRequesting] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [ollamaSkipped, setOllamaSkipped] = useState(false);
+  const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
+  const [vaultDefault, setVaultDefault] = useState<string | null>(null);
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultError, setVaultError] = useState<string | null>(null);
+  const [vaultSkipped, setVaultSkipped] = useState(false);
 
   useThemeFromSettings(refreshTick);
 
@@ -102,6 +112,21 @@ export function App() {
   }, [refreshTick]);
 
   useWindowFocus(() => setRefreshTick((n) => n + 1));
+
+  // Load vault status + default suggestion once.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([commands.vaultStatus(), commands.suggestedVaultPath()])
+      .then(([s, def]) => {
+        if (cancelled) return;
+        setVaultStatus(s);
+        setVaultDefault(def);
+      })
+      .catch((err) => console.error("vault status load failed", err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load local Ollama model list when entering step 3 + on focus there.
   useEffect(() => {
@@ -237,8 +262,39 @@ export function App() {
     });
   }, []);
 
+  const handleSetVault = useCallback(async (path: string) => {
+    setVaultBusy(true);
+    setVaultError(null);
+    try {
+      const next = await commands.setVaultPath(path);
+      setVaultStatus(next);
+      setVaultSkipped(false);
+    } catch (err) {
+      console.error("set_vault_path failed", err);
+      setVaultError(String(err));
+    } finally {
+      setVaultBusy(false);
+    }
+  }, []);
+
+  const handlePickVault = useCallback(async () => {
+    setVaultError(null);
+    try {
+      const picked = await openDialog({
+        directory: true,
+        multiple: false,
+        title: "Choose a folder for your Fluister vault",
+      });
+      if (typeof picked !== "string") return;
+      await handleSetVault(picked);
+    } catch (err) {
+      console.error("vault picker failed", err);
+      setVaultError(String(err));
+    }
+  }, [handleSetVault]);
+
   const goNext = useCallback(() => {
-    setStep((s) => (s < 3 ? ((s + 1) as StepId) : s));
+    setStep((s) => (s < 4 ? ((s + 1) as StepId) : s));
   }, []);
 
   const goBack = useCallback(() => {
@@ -302,11 +358,27 @@ export function App() {
           />
         )}
         {step === 3 && (
+          <StorageStep
+            status={vaultStatus}
+            defaultPath={vaultDefault}
+            busy={vaultBusy}
+            error={vaultError}
+            skipped={vaultSkipped}
+            onUseDefault={() => {
+              if (vaultDefault) handleSetVault(vaultDefault);
+            }}
+            onPick={handlePickVault}
+            onSkip={() => setVaultSkipped(true)}
+            onUnskip={() => setVaultSkipped(false)}
+          />
+        )}
+        {step === 4 && (
           <DoneStep
             language={language}
             activeWhisper={activeWhisper}
             status={status}
             ollamaSkipped={ollamaSkipped}
+            vaultStatus={vaultStatus}
           />
         )}
       </main>
@@ -316,7 +388,7 @@ export function App() {
           step {step + 1} of {STEPS.length}
         </span>
         <div className="ob-footer-actions">
-          {step > 0 && step < 3 && (
+          {step > 0 && step < 4 && (
             <Button variant="ghost" size="sm" onClick={goBack} className="h-9 px-4 gap-1.5">
               <ChevronLeft size={14} aria-hidden />
               <span>Back</span>
@@ -375,6 +447,17 @@ export function App() {
             </Button>
           )}
           {step === 3 && (
+            <Button
+              size="sm"
+              onClick={goNext}
+              disabled={vaultBusy}
+              className="h-9 px-4 gap-1.5"
+            >
+              <span>Continue</span>
+              <ArrowRight size={14} aria-hidden />
+            </Button>
+          )}
+          {step === 4 && (
             <Button size="sm" onClick={handleFinish} className="h-9 px-5">
               Start dictating
             </Button>
@@ -686,16 +769,127 @@ function OllamaStep({
   );
 }
 
+function StorageStep({
+  status,
+  defaultPath,
+  busy,
+  error,
+  skipped,
+  onUseDefault,
+  onPick,
+  onSkip,
+  onUnskip,
+}: {
+  status: VaultStatus | null;
+  defaultPath: string | null;
+  busy: boolean;
+  error: string | null;
+  skipped: boolean;
+  onUseDefault: () => void;
+  onPick: () => void;
+  onSkip: () => void;
+  onUnskip: () => void;
+}) {
+  const configured = status?.path != null;
+
+  return (
+    <StepLayout
+      title="Where should your data live?"
+      subtitle="Profiles and vocabulary become Markdown files you can edit in any text editor and sync via iCloud, Dropbox, or Git. Your dictation history stays local. Optional — you can set this up later in Settings."
+    >
+      {configured ? (
+        <div className="ob-card">
+          <div className="flex items-center gap-2 text-body font-medium text-foreground mb-1">
+            <Check size={14} className="text-[color:var(--color-success)]" aria-hidden />
+            <span>Vault is set up.</span>
+          </div>
+          <p className="text-footnote text-text-muted mb-3">
+            <span className="font-mono text-tag">{status?.path}</span>
+          </p>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={onPick} className="h-8">
+              Choose a different folder…
+            </Button>
+          </div>
+        </div>
+      ) : skipped ? (
+        <div className="ob-card text-center">
+          <p className="text-body text-foreground mb-3">
+            Sticking with the local cache. You can set up a vault later from
+            Settings → Storage.
+          </p>
+          <Button variant="ghost" size="sm" onClick={onUnskip} className="h-8">
+            Change my mind
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="ob-card">
+            <div className="flex items-center gap-2 text-body font-medium text-foreground mb-1">
+              <HardDrive size={14} aria-hidden />
+              <span>Use the suggested folder</span>
+            </div>
+            <p className="text-footnote text-text-muted mb-3">
+              <span className="font-mono text-tag">
+                {defaultPath ?? "~/Fluister"}
+              </span>
+            </p>
+            <Button
+              variant="default"
+              size="sm"
+              disabled={busy || !defaultPath}
+              onClick={onUseDefault}
+              className="h-8 w-full"
+            >
+              {busy ? "Setting up…" : "Use this folder"}
+            </Button>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onPick}
+              disabled={busy}
+              className="h-8 flex-1 gap-1.5"
+            >
+              <FolderOpen size={13} aria-hidden />
+              <span>Choose another folder…</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSkip}
+              disabled={busy}
+              className="h-8 flex-1"
+            >
+              Skip for now
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p className="mt-3 text-footnote text-[color:var(--color-danger)]">
+          {error}
+        </p>
+      )}
+    </StepLayout>
+  );
+}
+
 function DoneStep({
   language,
   activeWhisper,
   status,
   ollamaSkipped,
+  vaultStatus,
 }: {
   language: string;
   activeWhisper: ModelInfo | null;
   status: OnboardingStatus | null;
   ollamaSkipped: boolean;
+  vaultStatus: VaultStatus | null;
 }) {
   const langName = LANGUAGES.find((l) => l.code === language)?.name ?? language;
   const ollamaSummary = ollamaSkipped
@@ -705,6 +899,9 @@ function DoneStep({
       : status?.ollama_running
         ? "Running, no models yet"
         : "Not installed";
+  const vaultSummary = vaultStatus?.path
+    ? vaultStatus.path
+    : "Not set up — using local cache";
 
   return (
     <div className="flex flex-col items-center text-center px-12 pt-2">
@@ -732,6 +929,7 @@ function DoneStep({
           value={status?.accessibility ? "Granted" : "Not granted"}
         />
         <SummaryRow label="Ollama (cleanup)" value={ollamaSummary} />
+        <SummaryRow label="Vault" value={vaultSummary} />
       </ul>
     </div>
   );

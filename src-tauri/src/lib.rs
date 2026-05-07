@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,8 @@ mod ollama;
 mod paste;
 mod permissions;
 mod transcribe;
+mod vault;
+mod vault_watcher;
 mod vocabulary;
 
 const SETTINGS_KEY: &str = "config";
@@ -51,6 +53,12 @@ pub struct Settings {
     /// missing. The picker UI always resolves to a concrete profile.
     #[serde(default)]
     pub active_profile_id: Option<i64>,
+    /// Filesystem path to the user's Fluister vault. None = SQLite-only
+    /// (legacy mode). When set, profile + vocabulary mutations write
+    /// through to vault files and the cache reconciles to the vault on
+    /// startup.
+    #[serde(default)]
+    pub vault_path: Option<PathBuf>,
 }
 
 fn default_ollama_model() -> String {
@@ -95,6 +103,7 @@ impl Default for Settings {
             language: default_language(),
             onboarding_complete: false,
             active_profile_id: None,
+            vault_path: None,
         }
     }
 }
@@ -121,6 +130,9 @@ struct AppState {
     db: db::Db,
     recording_started_at: Arc<Mutex<Option<Instant>>>,
     last_external_app: Arc<Mutex<Option<frontmost::TargetApp>>>,
+    /// Live vault watcher, present iff `Settings.vault_path` is set.
+    /// Dropped to stop watching when the user disables the vault.
+    vault_watcher: Arc<Mutex<Option<vault_watcher::VaultWatcher>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -133,6 +145,217 @@ fn db_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("fluister/history.db")
+}
+
+// ─── Vault helpers ──────────────────────────────────────────────────────────
+
+/// Pull the configured vault path out of state, returning None if the
+/// user hasn't set up a vault yet (legacy SQLite-only mode).
+fn vault_root(state: &AppState) -> Option<PathBuf> {
+    state.settings.lock().vault_path.clone()
+}
+
+/// Write a single profile to the vault, computing the slugified filename.
+/// Logs and continues on failure — vault writes are best-effort; SQLite
+/// remains the runtime source of truth.
+fn vault_write_profile(root: &Path, p: &db::Profile) -> anyhow::Result<()> {
+    let ulid = ulid::Ulid::from_string(&p.ulid)
+        .map_err(|e| anyhow::anyhow!("profile {} has invalid ulid: {e}", p.id))?;
+    let created = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(p.created_at)
+        .unwrap_or_else(chrono::Utc::now);
+    vault::ensure_layout(root)?;
+    vault::write_profile(
+        root,
+        &vault::VaultProfile {
+            ulid,
+            name: p.name.clone(),
+            description: p.description.clone(),
+            style_prompt: p.style_prompt.clone(),
+            vocabulary: p.vocabulary.clone(),
+            created_at: created,
+        },
+    )?;
+    Ok(())
+}
+
+/// Rewrite the global vocabulary file from the SQLite list. Vocabulary
+/// is a single Markdown table, so partial writes don't make sense — the
+/// whole file is rewritten on every change.
+fn vault_rewrite_vocabulary(root: &Path, entries: &[db::VocabularyEntry]) -> anyhow::Result<()> {
+    let mut vault_entries = Vec::with_capacity(entries.len());
+    for e in entries {
+        let ulid = ulid::Ulid::from_string(&e.ulid)
+            .map_err(|err| anyhow::anyhow!("vocab {} has invalid ulid: {err}", e.id))?;
+        let created = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(e.created_at)
+            .unwrap_or_else(chrono::Utc::now);
+        vault_entries.push(vault::VaultVocab {
+            ulid,
+            term: e.term.clone(),
+            aliases: e.aliases.clone(),
+            created_at: created,
+        });
+    }
+    vault::ensure_layout(root)?;
+    vault::write_vocabulary(root, &vault_entries)?;
+    Ok(())
+}
+
+/// Update `.fluister-meta.yml` with the active profile's ULID. Resolves
+/// the ULID from SQLite via the i64 id stored in Settings.
+fn vault_write_meta(state: &AppState, root: &Path) -> anyhow::Result<()> {
+    let active_ulid = match state.settings.lock().active_profile_id {
+        Some(id) => state
+            .db
+            .list_profiles()?
+            .into_iter()
+            .find(|p| p.id == id)
+            .map(|p| p.ulid),
+        None => None,
+    };
+    let mut meta = vault::read_meta(root).unwrap_or_default();
+    meta.active_profile_ulid = active_ulid;
+    if meta.version == 0 {
+        meta.version = 1;
+    }
+    vault::write_meta(root, &meta)?;
+    Ok(())
+}
+
+/// Reconcile the SQLite cache against the vault.
+///
+/// `delete_orphans = false` ("merge both ways") — used at startup. Vault
+/// wins on shared rows; SQLite-only rows are written to the vault;
+/// vault-only rows are inserted into SQLite. Never deletes — that's safer
+/// when the user has opted into a vault but the vault could be empty.
+///
+/// `delete_orphans = true` ("vault is canonical") — used by the file
+/// watcher. SQLite rows whose ULID is missing from the vault are deleted.
+/// This is the right semantic when the user's intent is observable (they
+/// just deleted a file in Finder while the app was running).
+fn reconcile_vault_into_db(
+    database: &db::Db,
+    root: &Path,
+    delete_orphans: bool,
+) -> anyhow::Result<()> {
+    vault::ensure_layout(root)?;
+
+    // ── Profiles ──
+    let vault_profiles = vault::list_profiles(root)?;
+    let mut sqlite_profiles = database.list_profiles()?;
+
+    for (_, vp) in &vault_profiles {
+        let ulid_str = vp.ulid.to_string();
+        match database.find_profile_by_ulid(&ulid_str)? {
+            Some(_) => {
+                database.update_profile_by_ulid(
+                    &ulid_str,
+                    &vp.name,
+                    &vp.description,
+                    &vp.style_prompt,
+                    &vp.vocabulary,
+                )?;
+            }
+            None => {
+                let created = vp.created_at.timestamp_millis();
+                database.create_profile_with_ulid(
+                    &ulid_str,
+                    &vp.name,
+                    &vp.description,
+                    &vp.style_prompt,
+                    &vp.vocabulary,
+                    created,
+                )?;
+            }
+        }
+    }
+
+    sqlite_profiles.sort_by_key(|p| p.id);
+    let vault_ulids: std::collections::HashSet<String> = vault_profiles
+        .iter()
+        .map(|(_, p)| p.ulid.to_string())
+        .collect();
+
+    if delete_orphans {
+        // SQLite-only rows → delete (user removed the file).
+        for p in &sqlite_profiles {
+            if !p.ulid.is_empty() && !vault_ulids.contains(&p.ulid) {
+                if let Err(e) = database.delete_profile_by_ulid(&p.ulid) {
+                    log::warn!("watcher: delete profile {} failed: {e}", p.name);
+                }
+            }
+        }
+    } else {
+        // SQLite-only rows → write to vault (initial population).
+        for p in &sqlite_profiles {
+            if !p.ulid.is_empty() && !vault_ulids.contains(&p.ulid) {
+                if let Err(e) = vault_write_profile(root, p) {
+                    log::warn!("vault write missed profile {}: {e}", p.name);
+                }
+            }
+        }
+    }
+
+    // ── Vocabulary ──
+    let vault_vocab = vault::read_vocabulary(root)?;
+    let vault_vocab_ulids: std::collections::HashSet<String> =
+        vault_vocab.iter().map(|v| v.ulid.to_string()).collect();
+    for vv in &vault_vocab {
+        let ulid_str = vv.ulid.to_string();
+        match database.find_vocab_by_ulid(&ulid_str)? {
+            Some(_) => database.update_vocab_by_ulid(&ulid_str, &vv.term, &vv.aliases)?,
+            None => {
+                let created = vv.created_at.timestamp_millis();
+                database.create_vocabulary_entry_with_ulid(
+                    &ulid_str,
+                    &vv.term,
+                    &vv.aliases,
+                    created,
+                )?;
+            }
+        };
+    }
+
+    if delete_orphans {
+        let sqlite_vocab = database.list_vocabulary()?;
+        for v in &sqlite_vocab {
+            if !v.ulid.is_empty() && !vault_vocab_ulids.contains(&v.ulid) {
+                if let Err(e) = database.delete_vocab_by_ulid(&v.ulid) {
+                    log::warn!("watcher: delete vocab {} failed: {e}", v.term);
+                }
+            }
+        }
+    } else {
+        // Rewrite the whole file so SQLite-only rows get persisted with
+        // consistent ordering.
+        let all_vocab = database.list_vocabulary()?;
+        if !all_vocab.is_empty() || !vault_vocab.is_empty() {
+            if let Err(e) = vault_rewrite_vocabulary(root, &all_vocab) {
+                log::warn!("vault rewrite vocabulary failed: {e}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Read `.fluister-meta.yml` and reflect `active_profile_ulid` into the
+/// in-memory Settings struct + saved row. No-op if meta is missing or the
+/// referenced ULID isn't in SQLite.
+fn sync_meta_into_settings(state: &AppState, root: &Path) -> anyhow::Result<()> {
+    let meta = vault::read_meta(root)?;
+    let Some(ulid) = meta.active_profile_ulid else {
+        return Ok(());
+    };
+    let resolved = match state.db.find_profile_by_ulid(&ulid)? {
+        Some(p) => Some(p.id),
+        None => None,
+    };
+    let mut settings = state.settings.lock();
+    if settings.active_profile_id != resolved {
+        settings.active_profile_id = resolved;
+        save_settings(&state.db, &settings)?;
+    }
+    Ok(())
 }
 
 /// One-time migration of the data directory from the old "local-whisper"
@@ -918,6 +1141,131 @@ fn update_settings(
     Ok(())
 }
 
+// ─── Vault setup ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultStatus {
+    pub path: Option<String>,
+    pub exists: bool,
+    pub profile_count: usize,
+    pub vocab_count: usize,
+}
+
+/// Snapshot of the current vault setup for the Storage settings card.
+#[tauri::command]
+fn vault_status(state: State<'_, AppState>) -> Result<VaultStatus, String> {
+    let path = state.settings.lock().vault_path.clone();
+    let Some(root) = path.as_ref() else {
+        return Ok(VaultStatus {
+            path: None,
+            exists: false,
+            profile_count: 0,
+            vocab_count: 0,
+        });
+    };
+    let exists = root.exists();
+    let (profile_count, vocab_count) = if exists {
+        let p = vault::list_profiles(root).map(|v| v.len()).unwrap_or(0);
+        let v = vault::read_vocabulary(root).map(|v| v.len()).unwrap_or(0);
+        (p, v)
+    } else {
+        (0, 0)
+    };
+    Ok(VaultStatus {
+        path: Some(root.to_string_lossy().into_owned()),
+        exists,
+        profile_count,
+        vocab_count,
+    })
+}
+
+/// Promote a folder to be the user's Fluister vault. Creates the layout
+/// if missing, then runs the merge-both-ways reconcile so any existing
+/// SQLite data lands in the vault and any pre-existing vault content is
+/// pulled into the cache.
+#[tauri::command]
+fn set_vault_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: PathBuf,
+) -> Result<VaultStatus, String> {
+    if path.is_file() {
+        return Err("That path is a file, not a folder".into());
+    }
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("creating vault dir: {e}"))?;
+    vault::ensure_layout(&path).map_err(|e| e.to_string())?;
+    reconcile_vault_into_db(&state.db, &path, false).map_err(|e| e.to_string())?;
+
+    {
+        let mut settings = state.settings.lock();
+        settings.vault_path = Some(path.clone());
+        save_settings(&state.db, &settings).map_err(|e| e.to_string())?;
+    }
+    if let Err(e) = vault_write_meta(&state, &path) {
+        log::warn!("vault meta refresh failed: {e}");
+    }
+
+    // Start (or restart) the file watcher for the new path. Drop the old
+    // one first so notify releases the FSEvents handle on the old dir.
+    {
+        let mut slot = state.vault_watcher.lock();
+        *slot = None;
+        match vault_watcher::start(app.clone(), path.clone()) {
+            Ok(w) => *slot = Some(w),
+            Err(e) => log::warn!("vault watcher failed to start: {e}"),
+        }
+    }
+
+    let _ = app.emit("vault-changed", ());
+    let _ = app.emit("profiles-changed", ());
+    let _ = app.emit("vocabulary-changed", ());
+    vault_status(state)
+}
+
+/// Drop back to SQLite-only mode. The vault files are NOT deleted — the
+/// user can re-enable later or move/delete the folder manually.
+#[tauri::command]
+fn clear_vault_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VaultStatus, String> {
+    {
+        let mut settings = state.settings.lock();
+        settings.vault_path = None;
+        save_settings(&state.db, &settings).map_err(|e| e.to_string())?;
+    }
+    // Drop the watcher so notify releases the FSEvents handle.
+    *state.vault_watcher.lock() = None;
+    let _ = app.emit("vault-changed", ());
+    vault_status(state)
+}
+
+/// Suggest a sensible default vault location for first-run UX. Mirrors
+/// Obsidian's "Vaults" pattern by sitting directly under the user's home,
+/// where it's easy to find and natural to sync.
+#[tauri::command]
+fn suggested_vault_path() -> Result<String, String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Couldn't resolve home directory".to_string())?;
+    Ok(home.join("Fluister").to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn open_vault_in_finder(state: State<'_, AppState>) -> Result<(), String> {
+    let path = state
+        .settings
+        .lock()
+        .vault_path
+        .clone()
+        .ok_or_else(|| "No vault configured".to_string())?;
+    std::process::Command::new("open")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("open: {e}"))?;
+    Ok(())
+}
+
 // ─── Profiles ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -938,6 +1286,11 @@ fn create_profile(
         .db
         .create_profile(&name, &description, &style_prompt, &vocabulary)
         .map_err(|e| e.to_string())?;
+    if let Some(root) = vault_root(&state) {
+        if let Err(e) = vault_write_profile(&root, &p) {
+            log::warn!("vault write failed for new profile {}: {e}", p.name);
+        }
+    }
     let _ = app.emit("profiles-changed", ());
     Ok(p)
 }
@@ -952,10 +1305,30 @@ fn update_profile(
     style_prompt: String,
     vocabulary: String,
 ) -> Result<(), String> {
+    // Capture pre-update name + ulid so we can delete the old vault file
+    // if the user renamed the profile (slugified filename changes).
+    let pre = state.db.get_profile(id).map_err(|e| e.to_string())?;
+
     state
         .db
         .update_profile(id, &name, &description, &style_prompt, &vocabulary)
         .map_err(|e| e.to_string())?;
+
+    if let Some(root) = vault_root(&state) {
+        if let Some(prev) = pre {
+            if prev.name != name {
+                if let Err(e) = vault::delete_profile(&root, &prev.name) {
+                    log::warn!("vault delete (rename) failed for {}: {e}", prev.name);
+                }
+            }
+            // Re-fetch with the new contents so we write the updated file.
+            if let Ok(Some(updated)) = state.db.get_profile(id) {
+                if let Err(e) = vault_write_profile(&root, &updated) {
+                    log::warn!("vault write failed for {}: {e}", updated.name);
+                }
+            }
+        }
+    }
     let _ = app.emit("profiles-changed", ());
     Ok(())
 }
@@ -966,16 +1339,35 @@ fn delete_profile(
     state: State<'_, AppState>,
     id: i64,
 ) -> Result<(), String> {
+    let pre = state.db.get_profile(id).map_err(|e| e.to_string())?;
+
     state.db.delete_profile(id).map_err(|e| e.to_string())?;
 
     // If the active profile was the one we just deleted, clear it so the
     // resolver falls back to "Default".
-    let mut current = state.settings.lock();
-    if current.active_profile_id == Some(id) {
-        current.active_profile_id = None;
-        let _ = save_settings(&state.db, &current);
+    let cleared_active = {
+        let mut current = state.settings.lock();
+        if current.active_profile_id == Some(id) {
+            current.active_profile_id = None;
+            let _ = save_settings(&state.db, &current);
+            true
+        } else {
+            false
+        }
+    };
+
+    if let Some(root) = vault_root(&state) {
+        if let Some(prev) = &pre {
+            if let Err(e) = vault::delete_profile(&root, &prev.name) {
+                log::warn!("vault delete failed for {}: {e}", prev.name);
+            }
+        }
+        if cleared_active {
+            if let Err(e) = vault_write_meta(&state, &root) {
+                log::warn!("vault meta refresh failed: {e}");
+            }
+        }
     }
-    drop(current);
 
     let _ = app.emit("profiles-changed", ());
     Ok(())
@@ -992,6 +1384,11 @@ fn set_active_profile(
         current.active_profile_id = id;
         save_settings(&state.db, &current).map_err(|e| e.to_string())?;
     }
+    if let Some(root) = vault_root(&state) {
+        if let Err(e) = vault_write_meta(&state, &root) {
+            log::warn!("vault meta refresh failed: {e}");
+        }
+    }
     let _ = app.emit("profiles-changed", ());
     Ok(())
 }
@@ -1001,6 +1398,26 @@ fn set_active_profile(
 #[tauri::command]
 fn list_vocabulary(state: State<'_, AppState>) -> Result<Vec<db::VocabularyEntry>, String> {
     state.db.list_vocabulary().map_err(|e| e.to_string())
+}
+
+/// Mirror the full vocabulary list to the vault if a vault is configured.
+/// Vocabulary lives in a single Markdown table (Global.md) so every change
+/// rewrites the file from the post-mutation SQLite list — there's no
+/// per-entry file to selectively update.
+fn vault_sync_vocabulary(state: &AppState) {
+    let Some(root) = vault_root(state) else {
+        return;
+    };
+    let entries = match state.db.list_vocabulary() {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("vault sync vocab: list failed: {e}");
+            return;
+        }
+    };
+    if let Err(e) = vault_rewrite_vocabulary(&root, &entries) {
+        log::warn!("vault sync vocab: write failed: {e}");
+    }
 }
 
 #[tauri::command]
@@ -1014,6 +1431,7 @@ fn create_vocabulary_entry(
         .db
         .create_vocabulary_entry(&term, &aliases)
         .map_err(|e| e.to_string())?;
+    vault_sync_vocabulary(&state);
     let _ = app.emit("vocabulary-changed", ());
     Ok(entry)
 }
@@ -1030,6 +1448,7 @@ fn update_vocabulary_entry(
         .db
         .update_vocabulary_entry(id, &term, &aliases)
         .map_err(|e| e.to_string())?;
+    vault_sync_vocabulary(&state);
     let _ = app.emit("vocabulary-changed", ());
     Ok(())
 }
@@ -1044,6 +1463,7 @@ fn delete_vocabulary_entry(
         .db
         .delete_vocabulary_entry(id)
         .map_err(|e| e.to_string())?;
+    vault_sync_vocabulary(&state);
     let _ = app.emit("vocabulary-changed", ());
     Ok(())
 }
@@ -1105,8 +1525,18 @@ pub fn run() {
     let settings = load_settings(&database);
     let needs_onboarding = !settings.onboarding_complete;
 
+    // Reconcile the SQLite cache with the user's vault on boot. Best-effort;
+    // a malformed file shouldn't prevent the app from starting.
+    if let Some(root) = settings.vault_path.as_ref() {
+        match reconcile_vault_into_db(&database, root, false) {
+            Ok(_) => log::info!("vault reconciled at {}", root.display()),
+            Err(e) => log::warn!("vault reconcile failed at {}: {e}", root.display()),
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             recorder: Arc::new(audio::Recorder::new()),
             is_recording: Arc::new(Mutex::new(false)),
@@ -1115,6 +1545,7 @@ pub fn run() {
             db: database,
             recording_started_at: Arc::new(Mutex::new(None)),
             last_external_app: Arc::new(Mutex::new(None)),
+            vault_watcher: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             list_dictations,
@@ -1149,6 +1580,11 @@ pub fn run() {
             create_vocabulary_entry,
             update_vocabulary_entry,
             delete_vocabulary_entry,
+            vault_status,
+            set_vault_path,
+            clear_vault_path,
+            open_vault_in_finder,
+            suggested_vault_path,
         ])
         .on_window_event(|window, event| match window.label() {
             "history" | "onboarding" => {
@@ -1180,6 +1616,26 @@ pub fn run() {
             );
 
             setup_tray(app)?;
+
+            // If the user already has a vault configured, start watching it
+            // now. Boot already ran the merge-both-ways reconcile above; the
+            // watcher takes over for live edits going forward.
+            {
+                let state: tauri::State<AppState> = app.state();
+                let path = state.settings.lock().vault_path.clone();
+                if let Some(path) = path {
+                    match vault_watcher::start(app.handle().clone(), path.clone()) {
+                        Ok(w) => {
+                            *state.vault_watcher.lock() = Some(w);
+                            log::info!("vault watcher started at {}", path.display());
+                        }
+                        Err(e) => log::warn!(
+                            "vault watcher failed to start at {}: {e}",
+                            path.display()
+                        ),
+                    }
+                }
+            }
 
             // Apply native NSVisualEffectView frosted-glass to the popover.
             // CSS backdrop-filter sampled the desktop too literally and leaked

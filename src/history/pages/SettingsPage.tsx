@@ -12,15 +12,17 @@ import { useTauriEvent } from "../../lib/hooks";
 import { GeneralPane } from "../panes/GeneralPane";
 import { RecordingPane } from "../panes/RecordingPane";
 import { ModelsPane } from "../panes/ModelsPane";
+import { StoragePane } from "../panes/StoragePane";
 import { AboutPane } from "../panes/AboutPane";
 import { cn } from "../../lib/utils";
 
-type SettingsTab = "general" | "recording" | "models" | "about";
+type SettingsTab = "general" | "recording" | "models" | "storage" | "about";
 
 const TABS: { id: SettingsTab; label: string; hint: string }[] = [
   { id: "general", label: "General", hint: "Theme, language, overlay position" },
   { id: "recording", label: "Recording", hint: "Hotkey, mic, voice activity" },
   { id: "models", label: "Models", hint: "Whisper sizes & Ollama" },
+  { id: "storage", label: "Storage", hint: "Vault folder for profiles + vocab" },
   { id: "about", label: "About", hint: "Version & updates" },
 ];
 
@@ -28,6 +30,7 @@ const TAB_TITLE: Record<SettingsTab, string> = {
   general: "General",
   recording: "Recording",
   models: "Models",
+  storage: "Storage",
   about: "About",
 };
 
@@ -270,6 +273,7 @@ export function SettingsPage() {
                   onDownloadModel={beginDownload}
                 />
               )}
+              {tab === "storage" && <StoragePane />}
               {tab === "about" && <AboutPane />}
             </div>
           ) : (

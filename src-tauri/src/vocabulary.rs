@@ -41,6 +41,7 @@ mod tests {
             term: term.into(),
             aliases: aliases.iter().map(|s| (*s).into()).collect(),
             created_at: 0,
+            ulid: String::new(),
         }
     }
 
