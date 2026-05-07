@@ -177,6 +177,33 @@ button:focus-visible {
   margin-top: 2px;
 }
 
+/* Per-dictation profile chip — sits next to the timestamp on each row.
+   Tiny amber-tinted pill; uppercase tag-size text. Truncates if the
+   profile name is long (rare but defensive for user-named profiles). */
+.hist-profile-chip {
+  display: inline-block;
+  max-width: 80px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--color-brand) 22%, transparent);
+  color: light-dark(
+    color-mix(in oklch, var(--color-brand-strong) 95%, black),
+    color-mix(in oklch, var(--color-brand) 95%, white)
+  );
+  font-size: var(--text-tag);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+.hist-list-row-selected .hist-profile-chip {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--color-fg);
+}
+
 /* ──────────────────────────────────────────────────────────────────────
    Detail pane
    ────────────────────────────────────────────────────────────────────── */

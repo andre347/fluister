@@ -763,7 +763,8 @@ async fn run_pipeline(
     emit_status(app, "pasting", None);
     paste::paste_text(app, &cleaned).await?;
 
-    match database.insert(&raw, &cleaned, duration_ms) {
+    let profile_id = active_profile.as_ref().map(|p| p.id);
+    match database.insert(&raw, &cleaned, duration_ms, profile_id) {
         Ok(_) => {
             let _ = app.emit("history-changed", ());
         }

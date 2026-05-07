@@ -17,6 +17,10 @@ export interface Dictation {
   raw_text: string;
   duration_ms: number;
   favorite: boolean;
+  /** ID of the profile that was active when this dictation was recorded.
+   *  Null on rows pre-dating profile_id (migration v3) or if no profile
+   *  resolved at recording time. */
+  profile_id: number | null;
 }
 
 export interface Settings {

@@ -20,6 +20,9 @@ type Props = {
   onDelete: () => void;
   copyFlash: boolean;
   onAddedToVocab: (id: number) => void;
+  /** Profile id → display name. Null name (or null id on the dictation)
+   *  hides the profile segment from the meta line. */
+  profileNames: Map<number, string>;
 };
 
 function formatMeta(ts: number): string {
@@ -58,7 +61,12 @@ export function HistoryDetailPane({
   onDelete,
   copyFlash,
   onAddedToVocab,
+  profileNames,
 }: Props) {
+  const profileName =
+    dictation?.profile_id != null
+      ? profileNames.get(dictation.profile_id) ?? null
+      : null;
   const [rawOpen, setRawOpen] = useState(true);
 
   if (!dictation) {
@@ -74,6 +82,12 @@ export function HistoryDetailPane({
       <div className="hist-detail-header">
         <div className="text-tag font-medium uppercase tracking-wider text-faint">
           {formatMeta(dictation.created_at)}
+          {profileName && (
+            <>
+              {" · "}
+              <span>{profileName.toUpperCase()} PROFILE</span>
+            </>
+          )}
           {dictation.duration_ms > 0 && (
             <>
               {" · "}

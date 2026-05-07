@@ -48,7 +48,10 @@ body {
   gap: 8px;
   padding: 0 12px;
   box-sizing: border-box;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30);
+  /* No drop shadow: the overlay window is only 3px wider/taller than the
+     pill, so a 24px-blur shadow clips against the window edge and renders
+     as a grey halo. The dark frosted-glass fill already provides enough
+     contrast against any wallpaper. */
   /* Slide-in from below — matches spec ("translateY(20px) → 0, 200ms ease-out") */
   animation: slide-in 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }

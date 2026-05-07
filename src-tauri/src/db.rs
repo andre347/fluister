@@ -13,6 +13,11 @@ pub struct Dictation {
     pub cleaned_text: String,
     pub duration_ms: i64,
     pub favorite: bool,
+    /// Profile that was active when the recording was made. Nullable so
+    /// pre-v3 rows + recordings made when no profile resolves both work.
+    /// The frontend resolves the i64 to a display name via the profiles
+    /// list — a dangling id (profile deleted later) just shows no chip.
+    pub profile_id: Option<i64>,
 }
 
 /// A user-customisable cleanup profile. The `style_prompt` is appended to
@@ -97,13 +102,19 @@ impl Db {
 
     // ─── Dictations ─────────────────────────────────────────────────────────
 
-    pub fn insert(&self, raw: &str, cleaned: &str, duration_ms: i64) -> Result<i64> {
+    pub fn insert(
+        &self,
+        raw: &str,
+        cleaned: &str,
+        duration_ms: i64,
+        profile_id: Option<i64>,
+    ) -> Result<i64> {
         let now = now_ms();
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO dictations (created_at, raw_text, cleaned_text, duration_ms)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![now, raw, cleaned, duration_ms],
+            "INSERT INTO dictations (created_at, raw_text, cleaned_text, duration_ms, profile_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![now, raw, cleaned, duration_ms, profile_id],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -126,7 +137,7 @@ impl Db {
         match (favorites_only, pattern) {
             (true, Some(p)) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      WHERE favorite = 1 AND (cleaned_text LIKE ?1 OR raw_text LIKE ?1)
                      ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
@@ -137,7 +148,7 @@ impl Db {
             }
             (true, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      WHERE favorite = 1
                      ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
@@ -148,7 +159,7 @@ impl Db {
             }
             (false, Some(p)) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      WHERE cleaned_text LIKE ?1 OR raw_text LIKE ?1
                      ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
@@ -159,7 +170,7 @@ impl Db {
             }
             (false, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
                 )?;
@@ -194,7 +205,7 @@ impl Db {
     pub fn get(&self, id: i64) -> Result<Option<Dictation>> {
         let conn = self.conn.lock();
         match conn.query_row(
-            "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+            "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
              FROM dictations WHERE id = ?1",
             params![id],
             row_to_dictation,
@@ -469,6 +480,7 @@ fn row_to_dictation(row: &rusqlite::Row) -> rusqlite::Result<Dictation> {
         cleaned_text: row.get(3)?,
         duration_ms: row.get(4)?,
         favorite: row.get::<_, i64>(5)? != 0,
+        profile_id: row.get(6)?,
     })
 }
 
@@ -512,7 +524,8 @@ CREATE TABLE IF NOT EXISTS dictations (
     raw_text TEXT NOT NULL,
     cleaned_text TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
-    favorite INTEGER NOT NULL DEFAULT 0
+    favorite INTEGER NOT NULL DEFAULT 0,
+    profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dictations_created_at ON dictations(created_at DESC);
 
@@ -602,6 +615,18 @@ fn migrate(conn: &Connection) -> Result<()> {
              CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_ulid ON vocabulary_entries(ulid) WHERE ulid IS NOT NULL;
              PRAGMA user_version = 2;",
         )?;
+    }
+
+    if version < 3 {
+        // Tag dictations with the profile that produced them. Pre-v3 rows
+        // stay NULL — the UI just doesn't show a chip for them. The ALTER
+        // is wrapped because the column already exists on fresh installs
+        // (SCHEMA above includes it post-v3).
+        let _ = conn.execute_batch(
+            "ALTER TABLE dictations ADD COLUMN profile_id INTEGER \
+             REFERENCES profiles(id) ON DELETE SET NULL;",
+        );
+        conn.execute_batch("PRAGMA user_version = 3;")?;
     }
 
     Ok(())

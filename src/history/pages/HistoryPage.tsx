@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { commands, type Dictation } from "../../lib/tauri";
+import { commands, type Dictation, type Profile } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
 import { HistoryListPane } from "../HistoryListPane";
 import { HistoryDetailPane } from "../HistoryDetailPane";
@@ -19,6 +19,7 @@ type Props = {
 
 export function HistoryPage({ onAddedToVocab }: Props) {
   const [dictations, setDictations] = useState<Dictation[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -26,6 +27,30 @@ export function HistoryPage({ onAddedToVocab }: Props) {
   const [pendingDelete, setPendingDelete] = useState<Dictation | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Profile name lookup for the chip on each row + the detail meta line.
+  // Keyed by Profile.id; absent ids (deleted profiles, pre-v3 rows) just
+  // don't render a chip.
+  const profileNames = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const p of profiles) m.set(p.id, p.name);
+    return m;
+  }, [profiles]);
+
+  // Load profiles once, refresh on the standard profiles-changed event.
+  useEffect(() => {
+    let cancelled = false;
+    commands
+      .listProfiles()
+      .then((list) => {
+        if (!cancelled) setProfiles(list);
+      })
+      .catch((err) => console.error("list_profiles failed (history)", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshTick]);
+  useTauriEvent<unknown>("profiles-changed", () => setRefreshTick((n) => n + 1));
 
   const dictationsRef = useRef(dictations);
   useEffect(() => {
@@ -224,6 +249,7 @@ export function HistoryPage({ onAddedToVocab }: Props) {
         onSelect={setSelectedId}
         searchInputRef={searchInputRef}
         isLoading={isLoading}
+        profileNames={profileNames}
       />
       <HistoryDetailPane
         dictation={selected}
@@ -233,6 +259,7 @@ export function HistoryPage({ onAddedToVocab }: Props) {
         onDelete={handleDeleteRequest}
         copyFlash={copyFlash}
         onAddedToVocab={onAddedToVocab}
+        profileNames={profileNames}
       />
 
       <Dialog

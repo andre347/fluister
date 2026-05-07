@@ -11,6 +11,9 @@ type Props = {
   onSelect: (id: number) => void;
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   isLoading: boolean;
+  /** Profile id → display name. Rows whose profile_id is null OR whose
+   *  id isn't in the map render no chip. */
+  profileNames: Map<number, string>;
 };
 
 interface DateGroup {
@@ -61,6 +64,7 @@ export function HistoryListPane({
   onSelect,
   searchInputRef,
   isLoading,
+  profileNames,
 }: Props) {
   const groups = useMemo(() => groupByDate(dictations), [dictations]);
 
@@ -107,6 +111,11 @@ export function HistoryListPane({
                   dictation={d}
                   isSelected={d.id === selectedId}
                   onSelect={() => onSelect(d.id)}
+                  profileName={
+                    d.profile_id != null
+                      ? profileNames.get(d.profile_id) ?? null
+                      : null
+                  }
                 />
               ))}
             </div>
@@ -121,10 +130,12 @@ function ListRow({
   dictation,
   isSelected,
   onSelect,
+  profileName,
 }: {
   dictation: Dictation;
   isSelected: boolean;
   onSelect: () => void;
+  profileName: string | null;
 }) {
   return (
     <button
@@ -138,9 +149,16 @@ function ListRow({
       )}
     >
       <div className="flex items-center justify-between gap-2 mb-0.5">
-        <span className="font-mono text-tag opacity-80">
-          {formatClock(dictation.created_at)}
-        </span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {profileName && (
+            <span className="hist-profile-chip" title={profileName}>
+              {profileName}
+            </span>
+          )}
+          <span className="font-mono text-tag opacity-80">
+            {formatClock(dictation.created_at)}
+          </span>
+        </div>
         {dictation.favorite && (
           <span className="text-[color:var(--color-accent-yellow)] text-tag" aria-hidden>
             ★
