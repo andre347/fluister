@@ -1,0 +1,186 @@
+/* ──────────────────────────────────────────────────────────────────────
+   Fluister theme — shared across all four windows (popover, history,
+   onboarding, overlay). Each window's CSS imports this once.
+
+   Order matters in Tailwind v4: imports first, then @theme/@theme inline,
+   then @custom-variant, then plain CSS.
+   ────────────────────────────────────────────────────────────────────── */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* shadcn's `dark:` Tailwind variant. We use [data-theme="dark"] (set by
+   useThemeFromSettings based on user choice + system preference) instead
+   of the .dark class shadcn ships with by default. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ──────────────────────────────────────────────────────────────────────
+   Fluister brand tokens — used by hand-written CSS across all windows.
+   Color tokens use light-dark() so they auto-switch with [data-theme] /
+   color-scheme.
+   ────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Surfaces */
+  --color-canvas:    light-dark(#f5f5f7, #1c1c1e);
+  --color-surface:   light-dark(rgba(246, 246, 248, 0.86), rgba(28, 28, 30, 0.86));
+  --color-elev:      light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  --color-input-bg:  light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04));
+  --color-sidebar:   light-dark(rgba(0, 0, 0, 0.025), rgba(255, 255, 255, 0.025));
+
+  /* Foreground.
+     Note: --color-muted and --color-accent below intentionally avoid those
+     bare names because shadcn's @theme inline reserves them for its
+     surface/hover concepts. Use --color-text-muted for soft text and
+     --color-brand for the amber accent. */
+  --color-fg:          light-dark(#1d1d1f, #f5f5f7);
+  --color-text-muted:  light-dark(rgba(0, 0, 0, 0.55), rgba(245, 245, 247, 0.55));
+  --color-faint:       light-dark(rgba(0, 0, 0, 0.32), rgba(245, 245, 247, 0.32));
+
+  /* Lines and overlays */
+  --color-separator: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.07));
+  --color-hover:     light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  --color-active:    light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
+  --color-selected:  light-dark(rgba(232, 169, 97, 0.16), rgba(242, 181, 112, 0.22));
+
+  /* Accents — Fluister brand is a warm amber-honey. */
+  --color-brand:         light-dark(#E8A961, #F2B570);
+  --color-brand-strong:  light-dark(#D89046, #E8A961);
+  --color-accent-yellow: #ffd60a;
+  --color-success:       #34c759;
+  --color-warning:       #ffd60a;
+  --color-danger:        #ff453a;
+
+  /* Typography (Apple HIG informed) */
+  --text-display:  22px;
+  --text-title:    15px;
+  --text-item:     14px;   /* popover menu items */
+  --text-body:     13px;
+  --text-caption:  12px;
+  --text-meta:     12px;   /* popover row meta */
+  --text-footnote: 11px;
+  --text-tag:      10.5px;
+
+  /* Toolbar carve-out for the macOS traffic-light buttons */
+  --spacing-toolbar: 86px;
+
+  /* Motion */
+  --ease-default: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* SF Pro — replaces shadcn's default Geist. */
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  --font-sans:   var(--font-system);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   shadcn tokens, bridged to Fluister brand. Values reference Fluister
+   `light-dark()` tokens so they auto-switch — no separate dark block
+   required.
+   ────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light dark;
+
+  --background:           var(--color-canvas);
+  --foreground:           var(--color-fg);
+  --card:                 var(--color-surface);
+  --card-foreground:      var(--color-fg);
+  --popover:              var(--color-surface);
+  --popover-foreground:   var(--color-fg);
+
+  /* Primary = brand amber. */
+  --primary:              var(--color-brand);
+  --primary-foreground:   #ffffff;
+
+  --secondary:            var(--color-elev);
+  --secondary-foreground: var(--color-fg);
+  --muted:                var(--color-elev);
+  --muted-foreground:     var(--color-text-muted);
+  --accent:               var(--color-elev);
+  --accent-foreground:    var(--color-fg);
+  --destructive:          var(--color-danger);
+  --border:               var(--color-separator);
+  --input:                var(--color-separator);
+  --ring:                 var(--color-brand);
+
+  --chart-1: var(--color-brand);
+  --chart-2: var(--color-brand-strong);
+  --chart-3: var(--color-success);
+  --chart-4: var(--color-warning);
+  --chart-5: var(--color-danger);
+
+  --radius: 0.5rem;
+
+  --sidebar:                       var(--color-sidebar);
+  --sidebar-foreground:            var(--color-fg);
+  --sidebar-primary:               var(--color-brand);
+  --sidebar-primary-foreground:    #ffffff;
+  --sidebar-accent:                var(--color-elev);
+  --sidebar-accent-foreground:     var(--color-fg);
+  --sidebar-border:                var(--color-separator);
+  --sidebar-ring:                  var(--color-brand);
+}
+
+html[data-theme="light"] { color-scheme: light; }
+html[data-theme="dark"]  { color-scheme: dark; }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Map shadcn's --token vars into the --color-* namespace Tailwind v4
+   utilities consume (so `bg-primary`, `text-foreground`, etc. work).
+   ────────────────────────────────────────────────────────────────────── */
+@theme inline {
+  --color-background:               var(--background);
+  --color-foreground:               var(--foreground);
+  --color-card:                     var(--card);
+  --color-card-foreground:          var(--card-foreground);
+  --color-popover:                  var(--popover);
+  --color-popover-foreground:       var(--popover-foreground);
+  --color-primary:                  var(--primary);
+  --color-primary-foreground:       var(--primary-foreground);
+  --color-secondary:                var(--secondary);
+  --color-secondary-foreground:     var(--secondary-foreground);
+  --color-muted:                    var(--muted);
+  --color-muted-foreground:         var(--muted-foreground);
+  --color-accent:                   var(--accent);
+  --color-accent-foreground:        var(--accent-foreground);
+  --color-destructive:              var(--destructive);
+  --color-border:                   var(--border);
+  --color-input:                    var(--input);
+  --color-ring:                     var(--ring);
+  --color-chart-1:                  var(--chart-1);
+  --color-chart-2:                  var(--chart-2);
+  --color-chart-3:                  var(--chart-3);
+  --color-chart-4:                  var(--chart-4);
+  --color-chart-5:                  var(--chart-5);
+  --color-sidebar:                  var(--sidebar);
+  --color-sidebar-foreground:       var(--sidebar-foreground);
+  --color-sidebar-primary:          var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent:           var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border:           var(--sidebar-border);
+  --color-sidebar-ring:             var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Tauri drag-region helpers. macOS drag region attribute injection has
+   been unreliable on titleBarStyle: "Overlay" windows on recent macOS,
+   so we set the property explicitly.
+   ────────────────────────────────────────────────────────────────────── */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+[data-tauri-drag-region] input,
+[data-tauri-drag-region] textarea,
+[data-tauri-drag-region] button,
+[data-tauri-drag-region] select,
+[data-tauri-drag-region="false"],
+[data-tauri-drag-region="false"] * {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

@@ -1,55 +1,4 @@
-@import "tailwindcss";
-
-/* ──────────────────────────────────────────────────────────────────────
-   Theme tokens
-   ────────────────────────────────────────────────────────────────────── */
-@theme {
-  /* Surfaces */
-  --color-canvas:    light-dark(#f5f5f7, #1c1c1e);
-  --color-surface:   light-dark(rgba(246, 246, 248, 0.86), rgba(28, 28, 30, 0.86));
-  --color-elev:      light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
-  --color-input-bg:  light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04));
-  --color-sidebar:   light-dark(rgba(0, 0, 0, 0.025), rgba(255, 255, 255, 0.025));
-
-  /* Foreground */
-  --color-fg:        light-dark(#1d1d1f, #f5f5f7);
-  --color-muted:     light-dark(rgba(0, 0, 0, 0.55), rgba(245, 245, 247, 0.55));
-  --color-faint:     light-dark(rgba(0, 0, 0, 0.32), rgba(245, 245, 247, 0.32));
-
-  /* Lines and overlays */
-  --color-separator: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.07));
-  --color-hover:     light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
-  --color-active:    light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
-  --color-selected:  light-dark(rgba(232, 169, 97, 0.16), rgba(242, 181, 112, 0.22));
-
-  /* Accents — Fluister brand is a warm amber-honey. */
-  --color-accent:        light-dark(#E8A961, #F2B570);
-  --color-accent-strong: light-dark(#D89046, #E8A961);
-  --color-accent-yellow: #ffd60a;
-  --color-success:       #34c759;
-  --color-danger:        #ff453a;
-
-  /* Typography scale (Apple HIG informed) */
-  --text-display:  22px;
-  --text-title:    15px;
-  --text-body:     13px;
-  --text-caption:  12px;
-  --text-footnote: 11px;
-  --text-tag:      10.5px;
-
-  /* Toolbar carve-out for the macOS traffic-light buttons */
-  --spacing-toolbar: 86px;
-
-  /* Motion */
-  --ease-default: cubic-bezier(0.2, 0.7, 0.2, 1);
-
-  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
-}
-
-/* Theme switch */
-:root            { color-scheme: light dark; }
-html[data-theme="light"] { color-scheme: light; }
-html[data-theme="dark"]  { color-scheme: dark;  }
+@import "./theme.css";
 
 html, body {
   height: 100%;
@@ -62,48 +11,26 @@ html, body {
   overflow: hidden;
 }
 
+/* React mount point — must fill body and provide the flex column layout
+   the old <body class="flex flex-col h-full"> used to provide. */
+#root {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
 input, button, textarea, select { font-family: inherit; }
 input[type="search"]::-webkit-search-cancel-button { appearance: none; -webkit-appearance: none; }
 input::placeholder, textarea::placeholder { color: var(--color-faint); }
-
-/* Drag-region rules. Tauri 2 reads `data-tauri-drag-region` but its CSS
-   injection has been unreliable on titleBarStyle: "Overlay" windows on
-   recent macOS, so we set the property explicitly. */
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-  app-region: drag;
-}
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] textarea,
-[data-tauri-drag-region] button,
-[data-tauri-drag-region] select,
-[data-tauri-drag-region="false"],
-[data-tauri-drag-region="false"] * {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
 
 /* Focus rings — macOS style */
 *:focus           { outline: none; }
 *:focus-visible   { outline: none; }
 
-button:focus-visible,
-.position-cell:focus-visible,
-.segmented-btn:focus-visible,
-.settings-nav-item:focus-visible,
-.button-secondary:focus-visible {
-  outline: 2px solid var(--color-accent);
+button:focus-visible {
+  outline: 2px solid var(--color-brand);
   outline-offset: 2px;
-}
-
-.input-pill:focus,
-.field-select:focus {
-  border-color: color-mix(in oklch, var(--color-accent) 70%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 22%, transparent);
-}
-
-.toggle:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 30%, transparent);
 }
 
 /* Custom scrollbar */
@@ -113,17 +40,6 @@ button:focus-visible,
   border-radius: 8px;
 }
 .scrollable::-webkit-scrollbar-track { background: transparent; }
-
-/* ──────────────────────────────────────────────────────────────────────
-   Toolbar — dual-mode (list / settings)
-   ────────────────────────────────────────────────────────────────────── */
-.toolbar.settings-mode .toolbar-list      { display: none; }
-.toolbar.settings-mode .toolbar-settings  { display: flex; }
-.toolbar:not(.settings-mode) .toolbar-settings { display: none; }
-
-.toolbar-back-btn {
-  cursor: default;
-}
 
 /* ──────────────────────────────────────────────────────────────────────
    List
@@ -136,7 +52,7 @@ button:focus-visible,
   font-size: var(--text-footnote);
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   text-transform: uppercase;
   padding: 14px 16px 6px 16px;
   background: color-mix(in oklch, var(--color-canvas) 92%, transparent);
@@ -180,7 +96,7 @@ button:focus-visible,
   white-space: pre-wrap;
 }
 
-.row-meta { font-size: var(--text-footnote); color: var(--color-muted); margin-top: 3px; }
+.row-meta { font-size: var(--text-footnote); color: var(--color-text-muted); margin-top: 3px; }
 
 .row-actions {
   position: absolute;
@@ -219,7 +135,7 @@ button:focus-visible,
   justify-content: center;
   border: none;
   background: transparent;
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   cursor: pointer;
   border-radius: 5px;
   transition: background-color 100ms var(--ease-default), color 100ms var(--ease-default);
@@ -238,455 +154,3 @@ button:focus-visible,
   opacity: 0.7;
   margin-bottom: 14px;
 }
-
-/* ──────────────────────────────────────────────────────────────────────
-   Settings — sidebar + content layout
-   ────────────────────────────────────────────────────────────────────── */
-#settings-panel {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  background: var(--color-canvas);
-}
-#settings-panel.hidden { display: none; }
-
-/* Sidebar nav */
-.settings-nav {
-  width: 180px;
-  flex-shrink: 0;
-  padding: 12px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--color-sidebar);
-  border-right: 1px solid var(--color-separator);
-  overflow-y: auto;
-}
-
-.settings-nav-item {
-  display: flex;
-  align-items: center;
-  padding: 6px 10px;
-  border: none;
-  background: transparent;
-  text-align: left;
-  font-size: var(--text-body);
-  color: var(--color-fg);
-  border-radius: 6px;
-  cursor: default;
-  transition: background-color 100ms var(--ease-default);
-  width: 100%;
-}
-.settings-nav-item:hover                  { background: var(--color-hover); }
-.settings-nav-item[aria-current="page"] {
-  background: var(--color-active);
-  font-weight: 500;
-}
-
-/* Right-hand content pane */
-.settings-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 22px 32px 24px;
-  position: relative;
-}
-
-.settings-form { display: contents; }
-
-.settings-pane         { display: none; }
-.settings-pane.active  { display: block; }
-
-.settings-title {
-  font-size: var(--text-display);
-  font-weight: 600;
-  letter-spacing: -0.012em;
-  color: var(--color-fg);
-  margin: 0 0 16px 0;
-}
-
-/* ──────────────────────────────────────────────────────────────────────
-   Field group — Granola-style grouped card with internal dividers
-   ────────────────────────────────────────────────────────────────────── */
-.field-group {
-  background: var(--color-elev);
-  border: 1px solid var(--color-separator);
-  border-radius: 12px;
-  overflow: hidden;
-  margin-bottom: 14px;
-}
-
-.field-group-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  gap: 14px;
-}
-
-.field-group-row.stack {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.field-group-divider {
-  height: 1px;
-  background: var(--color-separator);
-  margin-left: 14px;
-}
-
-.field-group-label {
-  flex: 1;
-  min-width: 0;
-}
-.label-text {
-  font-size: var(--text-body);
-  font-weight: 500;
-  color: var(--color-fg);
-  line-height: 1.3;
-}
-.label-hint {
-  font-size: var(--text-footnote);
-  color: var(--color-faint);
-  line-height: 1.4;
-  margin-top: 2px;
-}
-.label-hint code {
-  background: var(--color-active);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: var(--text-tag);
-}
-
-.value-text {
-  font-size: var(--text-body);
-  color: var(--color-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Inputs nested inside a field-group get an inset look */
-.input-pill {
-  background: var(--color-input-bg);
-  border: 1px solid var(--color-separator);
-  border-radius: 6px;
-  padding: 7px 10px;
-  color: var(--color-fg);
-  font-size: var(--text-body);
-  outline: none;
-  width: 100%;
-  transition: border-color 140ms var(--ease-default), box-shadow 140ms var(--ease-default);
-  font-family: inherit;
-}
-textarea.input-pill {
-  min-height: 80px;
-  resize: vertical;
-  line-height: 1.45;
-}
-
-.field-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background: var(--color-input-bg);
-  border: 1px solid var(--color-separator);
-  border-radius: 6px;
-  padding: 7px 28px 7px 10px;
-  color: var(--color-fg);
-  font-size: var(--text-body);
-  outline: none;
-  cursor: pointer;
-  width: 100%;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2399999d' d='M5 6 0 0h10z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  transition: border-color 140ms var(--ease-default), box-shadow 140ms var(--ease-default);
-}
-
-.number-input {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.number-input .input-pill { width: 90px; }
-.number-input .suffix { color: var(--color-faint); font-size: var(--text-caption); }
-
-/* Inline select + refresh button (used by Ollama model picker) */
-.ollama-row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-.ollama-row .field-select { flex: 1; min-width: 0; }
-.ollama-row .button-secondary {
-  padding: 6px 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-muted);
-}
-.ollama-row .button-secondary:hover { color: var(--color-fg); }
-
-.field-status {
-  font-size: var(--text-footnote);
-  color: var(--color-faint);
-  margin-top: 2px;
-  line-height: 1.4;
-}
-.field-status.hidden { display: none; }
-.field-status.error { color: var(--color-danger); }
-
-/* Secondary button — for "Check for updates" etc. */
-.button-secondary {
-  background: var(--color-input-bg);
-  border: 1px solid var(--color-separator);
-  color: var(--color-fg);
-  font-size: var(--text-body);
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 120ms var(--ease-default), border-color 120ms var(--ease-default);
-}
-.button-secondary:hover { background: var(--color-hover); }
-.button-secondary:disabled { opacity: 0.55; cursor: default; }
-
-/* ──────────────────────────────────────────────────────────────────────
-   macOS toggle switch
-   ────────────────────────────────────────────────────────────────────── */
-.toggle {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 36px;
-  height: 22px;
-  background: var(--color-active);
-  border-radius: 11px;
-  position: relative;
-  cursor: pointer;
-  flex: 0 0 auto;
-  transition: background-color 180ms var(--ease-default);
-}
-.toggle::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  background: #fff;
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  transition: transform 180ms var(--ease-default);
-}
-.toggle:checked            { background: var(--color-success); }
-.toggle:checked::after     { transform: translateX(14px); }
-
-/* ──────────────────────────────────────────────────────────────────────
-   macOS segmented control
-   ────────────────────────────────────────────────────────────────────── */
-.segmented {
-  display: inline-flex;
-  background: light-dark(rgba(0,0,0,0.06), rgba(255,255,255,0.06));
-  border-radius: 8px;
-  padding: 2px;
-  gap: 2px;
-}
-.segmented-btn {
-  padding: 4px 12px;
-  border: none;
-  background: transparent;
-  font-size: var(--text-caption);
-  font-weight: 500;
-  color: var(--color-muted);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 140ms var(--ease-default), color 140ms var(--ease-default), box-shadow 140ms var(--ease-default);
-}
-.segmented-btn:hover:not([aria-pressed="true"]) { color: var(--color-fg); }
-.segmented-btn[aria-pressed="true"] {
-  background: light-dark(#fff, rgba(255, 255, 255, 0.10));
-  color: var(--color-fg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
-}
-
-/* ──────────────────────────────────────────────────────────────────────
-   Position picker (2×3 mini-screens)
-   ────────────────────────────────────────────────────────────────────── */
-.position-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  width: 100%;
-}
-.position-cell {
-  position: relative;
-  height: 38px;
-  border: 1px solid var(--color-separator);
-  border-radius: 6px;
-  background: var(--color-input-bg);
-  cursor: pointer;
-  padding: 0;
-  transition: border-color 140ms var(--ease-default), background-color 140ms var(--ease-default);
-}
-.position-cell:hover { background: var(--color-hover); }
-.position-cell[aria-pressed="true"] {
-  border-color: var(--color-accent);
-  background: light-dark(rgba(10, 132, 255, 0.10), rgba(10, 132, 255, 0.16));
-}
-.position-cell .dot {
-  position: absolute;
-  width: 14px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--color-muted);
-  transition: background-color 140ms var(--ease-default);
-}
-.position-cell[aria-pressed="true"] .dot { background: var(--color-accent); }
-.position-cell[data-pos$="-left"]   .dot { left: 5px; }
-.position-cell[data-pos$="-right"]  .dot { right: 5px; }
-.position-cell[data-pos$="-center"] .dot { left: 50%; transform: translateX(-50%); }
-.position-cell[data-pos^="top"]     .dot { top: 5px; }
-.position-cell[data-pos^="bottom"]  .dot { bottom: 5px; }
-
-/* ──────────────────────────────────────────────────────────────────────
-   Model-mismatch warning banner (inline inside a field-group)
-   ────────────────────────────────────────────────────────────────────── */
-.model-warning {
-  margin: 0 14px 12px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-radius: 8px;
-  background: light-dark(rgba(255, 214, 10, 0.14), rgba(255, 214, 10, 0.10));
-  border: 1px solid light-dark(rgba(255, 214, 10, 0.45), rgba(255, 214, 10, 0.30));
-}
-.model-warning.hidden { display: none; }
-
-.model-warning-text {
-  flex: 1;
-  font-size: var(--text-footnote);
-  color: var(--color-fg);
-  line-height: 1.4;
-}
-
-.model-warning-button {
-  flex: 0 0 auto;
-  background: var(--color-accent);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: var(--text-footnote);
-  font-weight: 500;
-  cursor: pointer;
-  transition: filter 120ms var(--ease-default);
-}
-.model-warning-button:hover    { filter: brightness(1.08); }
-.model-warning-button:disabled { opacity: 0.55; cursor: default; }
-
-/* ──────────────────────────────────────────────────────────────────────
-   Whisper-model list
-   ────────────────────────────────────────────────────────────────────── */
-.models-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.model-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--color-input-bg);
-  border: 1px solid var(--color-separator);
-}
-.model-item.active {
-  border-color: color-mix(in oklch, var(--color-accent) 60%, transparent);
-  background: light-dark(rgba(10, 132, 255, 0.06), rgba(10, 132, 255, 0.10));
-}
-
-.model-info { flex: 1; min-width: 0; }
-.model-name {
-  font-size: var(--text-caption);
-  font-weight: 500;
-  color: var(--color-fg);
-}
-.model-meta {
-  font-size: var(--text-footnote);
-  color: var(--color-muted);
-  margin-top: 2px;
-}
-
-.model-action {
-  flex: 0 0 auto;
-  background: var(--color-accent);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 5px 12px;
-  font-size: var(--text-footnote);
-  font-weight: 500;
-  cursor: pointer;
-  transition: filter 120ms var(--ease-default), background-color 120ms var(--ease-default);
-}
-.model-action:hover    { filter: brightness(1.08); }
-.model-action:disabled { opacity: 0.55; cursor: default; filter: none; }
-.model-action.secondary {
-  background: transparent;
-  color: var(--color-fg);
-  border: 1px solid var(--color-separator);
-}
-.model-action.secondary:hover {
-  background: var(--color-hover);
-  filter: none;
-}
-.model-action.active-tag {
-  background: transparent;
-  color: var(--color-accent);
-  cursor: default;
-  font-weight: 600;
-}
-
-.model-progress {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 120px;
-}
-.model-progress .bar {
-  width: 80px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--color-active);
-  overflow: hidden;
-}
-.model-progress .bar-fill {
-  height: 100%;
-  background: var(--color-accent);
-  border-radius: inherit;
-  transition: width 200ms ease;
-}
-.model-progress .pct {
-  font-size: var(--text-footnote);
-  color: var(--color-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 30px;
-  text-align: right;
-}
-
-/* ──────────────────────────────────────────────────────────────────────
-   Settings status toast (bottom-right of content pane)
-   ────────────────────────────────────────────────────────────────────── */
-.settings-status {
-  position: sticky;
-  bottom: 0;
-  text-align: right;
-  font-size: var(--text-footnote);
-  color: var(--color-muted);
-  height: 18px;
-  margin-top: 8px;
-  transition: opacity 200ms var(--ease-default);
-}
-.settings-status.opacity-0 { opacity: 0; }

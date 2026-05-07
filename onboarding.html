@@ -4,89 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Welcome to Fluister</title>
-    <link rel="stylesheet" href="/src/onboarding.css" />
-    <script type="module" src="/src/onboarding.ts" defer></script>
+    <script type="module" src="/src/onboarding/main.tsx" defer></script>
   </head>
-  <body class="ob-body">
-    <header data-tauri-drag-region class="ob-header"></header>
-
-    <main class="ob-main">
-      <div class="ob-hero">
-        <div class="ob-icon" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="64" height="64">
-            <rect width="64" height="64" rx="14" fill="#1c1c1e"/>
-            <g fill="#ffffff">
-              <rect x="14"   y="26"  width="4" height="12" rx="2"/>
-              <rect x="22"   y="22"  width="4" height="20" rx="2"/>
-              <rect x="30"   y="18"  width="4" height="28" rx="2"/>
-              <rect x="38"   y="22"  width="4" height="20" rx="2"/>
-              <rect x="46"   y="26"  width="4" height="12" rx="2"/>
-            </g>
-          </svg>
-        </div>
-        <h1 class="ob-title">Welcome to Fluister</h1>
-        <p class="ob-subtitle">
-          Hold <kbd>Right ⌥</kbd> anywhere, talk, release. Your voice becomes text — every step runs on your machine.
-        </p>
-      </div>
-
-      <ul class="ob-list" id="ob-list">
-
-        <li class="ob-row" data-step="microphone">
-          <div class="ob-row-icon" data-state="loading"></div>
-          <div class="ob-row-body">
-            <div class="ob-row-title">Microphone access</div>
-            <div class="ob-row-desc">Required to capture what you say.</div>
-          </div>
-          <button type="button" class="ob-row-btn" data-action="grant-mic">Grant access</button>
-        </li>
-
-        <li class="ob-row" data-step="accessibility">
-          <div class="ob-row-icon" data-state="loading"></div>
-          <div class="ob-row-body">
-            <div class="ob-row-title">Accessibility access</div>
-            <div class="ob-row-desc">Needed for the global hotkey and for pasting into other apps.</div>
-          </div>
-          <button type="button" class="ob-row-btn" data-action="open-accessibility">Open Settings</button>
-        </li>
-
-        <li class="ob-row" data-step="language" data-state="ok">
-          <div class="ob-row-icon" data-state="ok"></div>
-          <div class="ob-row-body">
-            <div class="ob-row-title">Spoken language</div>
-            <div class="ob-row-desc">You can change this any time in Settings.</div>
-          </div>
-          <select id="ob-language" class="ob-row-select" aria-label="Spoken language"></select>
-        </li>
-
-        <li class="ob-row" data-step="whisper">
-          <div class="ob-row-icon" data-state="loading"></div>
-          <div class="ob-row-body">
-            <div class="ob-row-title">Whisper model</div>
-            <div class="ob-row-desc" id="ob-whisper-desc">Base · multilingual · ~142 MB.</div>
-            <div class="ob-progress hidden" id="ob-progress">
-              <div class="ob-progress-bar"><div class="ob-progress-fill"></div></div>
-              <div class="ob-progress-pct">0%</div>
-            </div>
-          </div>
-          <button type="button" class="ob-row-btn" data-action="download-whisper">Download</button>
-        </li>
-
-        <li class="ob-row" data-step="ollama">
-          <div class="ob-row-icon" data-state="loading"></div>
-          <div class="ob-row-body">
-            <div class="ob-row-title">Ollama <span class="ob-row-badge">optional</span></div>
-            <div class="ob-row-desc" id="ob-ollama-desc">Polishes filler words and punctuation. Runs locally.</div>
-          </div>
-          <button type="button" class="ob-row-btn secondary" data-action="open-ollama-site">Get Ollama</button>
-        </li>
-
-      </ul>
-
-      <div class="ob-footer">
-        <button type="button" class="ob-skip" data-action="skip-ollama">Skip — use raw transcripts</button>
-        <button type="button" class="ob-cta" id="ob-cta" disabled>Get Started</button>
-      </div>
-    </main>
+  <body>
+    <div id="root"></div>
   </body>
 </html>

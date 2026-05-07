@@ -1,40 +1,4 @@
-@import "tailwindcss";
-
-@theme {
-  --color-canvas:    light-dark(#f5f5f7, #1c1c1e);
-  --color-elev:      light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
-  --color-fg:        light-dark(#1d1d1f, #f5f5f7);
-  --color-muted:     light-dark(rgba(0, 0, 0, 0.55), rgba(245, 245, 247, 0.55));
-  --color-faint:     light-dark(rgba(0, 0, 0, 0.32), rgba(245, 245, 247, 0.32));
-  --color-separator: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.07));
-  --color-hover:     light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
-  --color-input-bg:  light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04));
-  --color-accent:    light-dark(#E8A961, #F2B570);
-  --color-success:   #34c759;
-  --color-warning:   #ffd60a;
-  --color-danger:    #ff453a;
-
-  --text-display: 22px;
-  --text-body:    13px;
-  --text-caption: 12px;
-  --text-footnote:11px;
-
-  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
-}
-
-:root            { color-scheme: light dark; }
-html[data-theme="light"] { color-scheme: light; }
-html[data-theme="dark"]  { color-scheme: dark;  }
-
-[data-tauri-drag-region] {
-  -webkit-app-region: drag;
-  app-region: drag;
-}
-[data-tauri-drag-region] input,
-[data-tauri-drag-region] button {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
+@import "./theme.css";
 
 html, body {
   margin: 0;
@@ -44,6 +8,13 @@ html, body {
   font-family: var(--font-system);
   font-size: var(--text-body);
   -webkit-font-smoothing: antialiased;
+}
+
+/* React mount point — must fill body so .ob-body's height: 100% resolves
+   against the window, not an auto-height div. */
+#root {
+  height: 100%;
+  width: 100%;
 }
 
 .ob-body {
@@ -85,7 +56,7 @@ html, body {
 
 .ob-subtitle {
   font-size: var(--text-body);
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   margin: 0 auto;
   max-width: 380px;
   line-height: 1.5;
@@ -185,7 +156,7 @@ html, body {
 }
 .ob-row-desc {
   font-size: var(--text-footnote);
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   margin-top: 2px;
   line-height: 1.4;
 }
@@ -197,7 +168,7 @@ html, body {
   background: var(--color-input-bg);
   border: 1px solid var(--color-separator);
   font-size: 10px;
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   font-weight: 500;
   margin-left: 4px;
   vertical-align: 1px;
@@ -205,7 +176,7 @@ html, body {
 
 .ob-row-btn {
   flex: 0 0 auto;
-  background: var(--color-accent);
+  background: var(--color-brand);
   color: white;
   border: none;
   border-radius: 6px;
@@ -246,8 +217,8 @@ html, body {
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 .ob-row-select:focus {
-  border-color: color-mix(in oklch, var(--color-accent) 70%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 22%, transparent);
+  border-color: color-mix(in oklch, var(--color-brand) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-brand) 22%, transparent);
 }
 
 /* === Inline progress (Whisper download) === */
@@ -268,13 +239,13 @@ html, body {
 .ob-progress-fill {
   height: 100%;
   width: 0%;
-  background: var(--color-accent);
+  background: var(--color-brand);
   border-radius: inherit;
   transition: width 200ms ease;
 }
 .ob-progress-pct {
   font-size: var(--text-footnote);
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   min-width: 36px;
   text-align: right;
@@ -292,7 +263,7 @@ html, body {
 .ob-skip {
   background: transparent;
   border: none;
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   font-size: var(--text-footnote);
   cursor: pointer;
   padding: 4px 6px;
@@ -303,7 +274,7 @@ html, body {
 .ob-skip:hover { color: var(--color-fg); }
 
 .ob-cta {
-  background: var(--color-accent);
+  background: var(--color-brand);
   color: white;
   border: none;
   border-radius: 8px;

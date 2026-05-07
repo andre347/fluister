@@ -10,6 +10,9 @@ use tauri::{
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+#[cfg(target_os = "macos")]
+use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+
 mod audio;
 mod db;
 mod frontmost;
@@ -19,6 +22,7 @@ mod ollama;
 mod paste;
 mod permissions;
 mod transcribe;
+mod vocabulary;
 
 const SETTINGS_KEY: &str = "config";
 
@@ -30,8 +34,6 @@ pub struct Settings {
     pub ollama_model: String,
     #[serde(default = "default_whisper_model_path")]
     pub whisper_model_path: String,
-    #[serde(default)]
-    pub vocabulary: String,
     #[serde(default = "default_cleanup_enabled")]
     pub cleanup_enabled: bool,
     #[serde(default)]
@@ -44,6 +46,11 @@ pub struct Settings {
     pub language: String,
     #[serde(default)]
     pub onboarding_complete: bool,
+    /// ID of the active profile. None falls back to whichever profile is
+    /// named "Default", or the built-in cleanup behaviour if even that is
+    /// missing. The picker UI always resolves to a concrete profile.
+    #[serde(default)]
+    pub active_profile_id: Option<i64>,
 }
 
 fn default_ollama_model() -> String {
@@ -81,13 +88,13 @@ impl Default for Settings {
         Self {
             ollama_model: default_ollama_model(),
             whisper_model_path: default_whisper_model_path(),
-            vocabulary: String::new(),
             cleanup_enabled: default_cleanup_enabled(),
             vad_silence_ms: 0,
             overlay_position: default_overlay_position(),
             theme: default_theme(),
             language: default_language(),
             onboarding_complete: false,
+            active_profile_id: None,
         }
     }
 }
@@ -462,12 +469,32 @@ async fn run_pipeline(
     let model_path = std::path::Path::new(&settings.whisper_model_path).to_path_buf();
     let transcriber = ensure_whisper(&whisper_slot, &model_path)?;
 
-    // Build initial_prompt: locale hint (British spelling, etc.) + user vocab.
-    let prompt = format!(
-        "{}{}",
-        ollama::locale_hint(&settings.language),
-        settings.vocabulary
-    );
+    // Resolve the active profile (falls back to the seeded "Default" profile
+    // or to an empty no-op profile if even that's gone).
+    let active_profile = resolve_active_profile(&database, &settings);
+
+    // Pull the global vocabulary terms once — they stack into Whisper's
+    // initial_prompt AND drive post-cleanup alias replacement.
+    let vocab_entries = database.list_vocabulary().unwrap_or_default();
+    let global_terms: Vec<&str> = vocab_entries.iter().map(|e| e.term.as_str()).collect();
+
+    // Build initial_prompt: locale hint (British spelling, etc.) + active
+    // profile vocabulary + global canonical terms.
+    let mut prompt_parts: Vec<String> = Vec::new();
+    let locale = ollama::locale_hint(&settings.language);
+    if !locale.is_empty() {
+        prompt_parts.push(locale.to_string());
+    }
+    if let Some(p) = &active_profile {
+        if !p.vocabulary.trim().is_empty() {
+            prompt_parts.push(p.vocabulary.clone());
+        }
+    }
+    if !global_terms.is_empty() {
+        prompt_parts.push(global_terms.join(", "));
+    }
+    let prompt = prompt_parts.join(" ");
+
     let whisper_iso = ollama::whisper_iso(&settings.language).map(str::to_string);
 
     let raw = tokio::task::spawn_blocking(move || {
@@ -480,9 +507,21 @@ async fn run_pipeline(
         return Ok(());
     }
 
-    let cleaned = if settings.cleanup_enabled {
+    let style_prompt = active_profile
+        .as_ref()
+        .map(|p| p.style_prompt.as_str())
+        .unwrap_or("");
+
+    let cleaned_pre = if settings.cleanup_enabled {
         emit_status(app, "cleaning", None);
-        match ollama::cleanup(&raw, &settings.ollama_model, &settings.language).await {
+        match ollama::cleanup(
+            &raw,
+            &settings.ollama_model,
+            &settings.language,
+            style_prompt,
+        )
+        .await
+        {
             Ok(text) if !text.is_empty() => text,
             Ok(_) => raw.clone(),
             Err(e) => {
@@ -493,6 +532,10 @@ async fn run_pipeline(
     } else {
         raw.clone()
     };
+
+    // Final pass: replace user-defined aliases with their canonical terms
+    // (e.g. "type script" → "TypeScript").
+    let cleaned = vocabulary::apply_replacements(&cleaned_pre, &vocab_entries);
 
     emit_status(app, "pasting", None);
     paste::paste_text(app, &cleaned).await?;
@@ -553,6 +596,25 @@ fn ensure_whisper(
     let t = Arc::new(transcribe::Transcriber::new(model_path)?);
     *guard = Some(Arc::clone(&t));
     Ok(t)
+}
+
+/// Resolve the currently-active profile. Tries the explicit
+/// `active_profile_id` first, then falls back to the seeded "Default"
+/// profile, then `None` if even that's been deleted.
+fn resolve_active_profile(database: &db::Db, settings: &Settings) -> Option<db::Profile> {
+    if let Some(id) = settings.active_profile_id {
+        if let Ok(Some(p)) = database.get_profile(id) {
+            return Some(p);
+        }
+    }
+    database
+        .list_profiles()
+        .ok()
+        .and_then(|profs| {
+            profs
+                .into_iter()
+                .find(|p| p.name.eq_ignore_ascii_case("Default"))
+        })
 }
 
 // ─── Tauri commands ──────────────────────────────────────────────────────────
@@ -856,6 +918,136 @@ fn update_settings(
     Ok(())
 }
 
+// ─── Profiles ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_profiles(state: State<'_, AppState>) -> Result<Vec<db::Profile>, String> {
+    state.db.list_profiles().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    description: String,
+    style_prompt: String,
+    vocabulary: String,
+) -> Result<db::Profile, String> {
+    let p = state
+        .db
+        .create_profile(&name, &description, &style_prompt, &vocabulary)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("profiles-changed", ());
+    Ok(p)
+}
+
+#[tauri::command]
+fn update_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+    description: String,
+    style_prompt: String,
+    vocabulary: String,
+) -> Result<(), String> {
+    state
+        .db
+        .update_profile(id, &name, &description, &style_prompt, &vocabulary)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("profiles-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
+    state.db.delete_profile(id).map_err(|e| e.to_string())?;
+
+    // If the active profile was the one we just deleted, clear it so the
+    // resolver falls back to "Default".
+    let mut current = state.settings.lock();
+    if current.active_profile_id == Some(id) {
+        current.active_profile_id = None;
+        let _ = save_settings(&state.db, &current);
+    }
+    drop(current);
+
+    let _ = app.emit("profiles-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn set_active_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Option<i64>,
+) -> Result<(), String> {
+    {
+        let mut current = state.settings.lock();
+        current.active_profile_id = id;
+        save_settings(&state.db, &current).map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("profiles-changed", ());
+    Ok(())
+}
+
+// ─── Vocabulary ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_vocabulary(state: State<'_, AppState>) -> Result<Vec<db::VocabularyEntry>, String> {
+    state.db.list_vocabulary().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_vocabulary_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    term: String,
+    aliases: Vec<String>,
+) -> Result<db::VocabularyEntry, String> {
+    let entry = state
+        .db
+        .create_vocabulary_entry(&term, &aliases)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("vocabulary-changed", ());
+    Ok(entry)
+}
+
+#[tauri::command]
+fn update_vocabulary_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    term: String,
+    aliases: Vec<String>,
+) -> Result<(), String> {
+    state
+        .db
+        .update_vocabulary_entry(id, &term, &aliases)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("vocabulary-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_vocabulary_entry(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
+    state
+        .db
+        .delete_vocabulary_entry(id)
+        .map_err(|e| e.to_string())?;
+    let _ = app.emit("vocabulary-changed", ());
+    Ok(())
+}
+
 // ─── Tray icon ───────────────────────────────────────────────────────────────
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
@@ -948,6 +1140,15 @@ pub fn run() {
             open_external_url,
             finish_onboarding,
             show_onboarding_window,
+            list_profiles,
+            create_profile,
+            update_profile,
+            delete_profile,
+            set_active_profile,
+            list_vocabulary,
+            create_vocabulary_entry,
+            update_vocabulary_entry,
+            delete_vocabulary_entry,
         ])
         .on_window_event(|window, event| match window.label() {
             "history" | "onboarding" => {
@@ -979,6 +1180,22 @@ pub fn run() {
             );
 
             setup_tray(app)?;
+
+            // Apply native NSVisualEffectView frosted-glass to the popover.
+            // CSS backdrop-filter sampled the desktop too literally and leaked
+            // color from saturated wallpapers; HudWindow gives the proper
+            // macOS-native dropdown appearance instead.
+            #[cfg(target_os = "macos")]
+            if let Some(popover) = app.get_webview_window("popover") {
+                if let Err(err) = apply_vibrancy(
+                    &popover,
+                    NSVisualEffectMaterial::HudWindow,
+                    None,
+                    Some(12.0),
+                ) {
+                    log::warn!("apply_vibrancy(popover) failed: {err:?}");
+                }
+            }
 
             // First-launch (or any launch where onboarding was skipped):
             // open the welcome window so the user can grant permissions

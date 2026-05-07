@@ -29,19 +29,27 @@ log = "0.4"
 env_logger = "0.11"
 dirs = "5"
 rusqlite = { version = "0.32", features = ["bundled"] }
+regex = "1"
 
 # whisper-rs builds whisper.cpp through cmake + clang.
 # Metal is enabled on macOS for Apple Silicon GPU acceleration.
 # core-graphics + core-foundation power the Right-Option global hotkey via CGEventTap.
 # objc2-app-kit drives frontmost-app tracking + activation for re-paste from history.
+# window-vibrancy gives the popover a real NSVisualEffectView frosted-glass
+# backdrop instead of the CSS backdrop-filter approximation, which leaks color
+# from saturated wallpapers.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.13", features = ["metal"] }
 core-graphics = "0.24"
 core-foundation = "0.10"
 objc2 = "0.5"
+window-vibrancy = "0.7"
 
 [profile.release]
 opt-level = 3
-lto = true
+# `lto = true` (fat LTO) collides with window-vibrancy's NSVisualEffectViewTagged
+# ObjC subclass declaration — the class symbol ends up in two CGUs and the linker
+# rejects the duplicate. Disable LTO to keep the build linkable.
+lto = false
 codegen-units = 1
 strip = true
