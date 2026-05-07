@@ -97,6 +97,29 @@ export function AboutPane() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Onboarding</CardTitle>
+          <CardDescription>
+            Re-walk the welcome flow — handy if you want to switch the
+            Whisper model or revisit Ollama setup.
+          </CardDescription>
+          <CardAction>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                commands.showOnboardingWindow().catch((err) =>
+                  console.error("show_onboarding_window failed", err),
+                )
+              }
+            >
+              Re-run onboarding
+            </Button>
+          </CardAction>
+        </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>About</CardTitle>
           <CardDescription className="leading-relaxed">
             Fluister is a tiny native macOS dictation utility powered by

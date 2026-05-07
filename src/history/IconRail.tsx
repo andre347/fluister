@@ -1,58 +1,90 @@
 import {
-  Sidebar as SidebarRoot,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "../components/ui/sidebar";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "../components/ui/tooltip";
+import { cn } from "../lib/utils";
 
 export type Section = "history" | "profiles" | "vocabulary" | "settings";
 
-const SECTIONS: { id: Section; label: string; icon: React.ReactNode }[] = [
+const TOP: { id: Section; label: string; icon: React.ReactNode }[] = [
   { id: "history", label: "History", icon: <HistoryIcon /> },
   { id: "profiles", label: "Profiles", icon: <ProfilesIcon /> },
   { id: "vocabulary", label: "Vocabulary", icon: <VocabularyIcon /> },
-  { id: "settings", label: "Settings", icon: <SettingsIcon /> },
 ];
+
+const BOTTOM: { id: Section; label: string; icon: React.ReactNode } = {
+  id: "settings",
+  label: "Settings",
+  icon: <SettingsIcon />,
+};
 
 type Props = {
   section: Section;
   onSectionChange: (s: Section) => void;
 };
 
-export function Sidebar({ section, onSectionChange }: Props) {
+export function IconRail({ section, onSectionChange }: Props) {
   return (
-    <SidebarRoot collapsible="icon">
-      {/* Carve out space for macOS traffic-light buttons + drag region. */}
-      <SidebarHeader
-        className="h-7 flex-shrink-0"
-        data-tauri-drag-region
-      />
+    <nav className="hist-rail" aria-label="Sections">
+      <div className="flex flex-col items-center gap-1.5">
+        {TOP.map((item) => (
+          <RailButton
+            key={item.id}
+            isActive={section === item.id}
+            label={item.label}
+            onClick={() => onSectionChange(item.id)}
+          >
+            {item.icon}
+          </RailButton>
+        ))}
+      </div>
+      <div className="mt-auto flex flex-col items-center gap-1.5">
+        <RailButton
+          isActive={section === BOTTOM.id}
+          label={BOTTOM.label}
+          onClick={() => onSectionChange(BOTTOM.id)}
+        >
+          {BOTTOM.icon}
+        </RailButton>
+      </div>
+    </nav>
+  );
+}
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {SECTIONS.map((s) => (
-                <SidebarMenuItem key={s.id}>
-                  <SidebarMenuButton
-                    isActive={section === s.id}
-                    tooltip={s.label}
-                    onClick={() => onSectionChange(s.id)}
-                  >
-                    {s.icon}
-                    <span>{s.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-    </SidebarRoot>
+function RailButton({
+  isActive,
+  label,
+  onClick,
+  children,
+}: {
+  isActive: boolean;
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={label}
+          aria-pressed={isActive}
+          className={cn(
+            "flex items-center justify-center w-8 h-8 rounded-md text-text-muted transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+            isActive
+              ? "bg-[color:var(--color-selected)] text-foreground"
+              : "hover:bg-[color:var(--color-hover)] hover:text-foreground",
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={6}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -66,7 +98,6 @@ function HistoryIcon() {
     </svg>
   );
 }
-
 function ProfilesIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -77,7 +108,6 @@ function ProfilesIcon() {
     </svg>
   );
 }
-
 function VocabularyIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -88,7 +118,6 @@ function VocabularyIcon() {
     </svg>
   );
 }
-
 function SettingsIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">

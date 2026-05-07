@@ -1,27 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type Dictation } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
-import { HistoryList } from "../HistoryList";
+import { HistoryListPane } from "../HistoryListPane";
+import { HistoryDetailPane } from "../HistoryDetailPane";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
 
-export function HistoryPage() {
+type Props = {
+  onAddedToVocab: (id: number) => void;
+};
+
+export function HistoryPage({ onAddedToVocab }: Props) {
   const [dictations, setDictations] = useState<Dictation[]>([]);
   const [search, setSearch] = useState("");
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [copyFlash, setCopyFlash] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Dictation | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const dictationsRef = useRef(dictations);
-  const searchRef = useRef(search);
   useEffect(() => {
     dictationsRef.current = dictations;
   }, [dictations]);
-  useEffect(() => {
-    searchRef.current = search;
-  }, [search]);
 
   // Refresh on filter changes (search debounced 180ms).
   useEffect(() => {
@@ -31,259 +40,222 @@ export function HistoryPage() {
         const items = await commands.listDictations({
           limit: 200,
           offset: 0,
-          favoritesOnly,
+          favoritesOnly: false,
           search: search || null,
         });
         if (!cancelled) {
           setDictations(items);
-          setSelectedIndex(-1);
+          setIsLoading(false);
+          // Auto-select first if nothing selected or selection was filtered out.
+          setSelectedId((curr) => {
+            if (curr != null && items.some((d) => d.id === curr)) return curr;
+            return items[0]?.id ?? null;
+          });
         }
       } catch (err) {
         console.error("list_dictations failed", err);
-        if (!cancelled) setDictations([]);
+        if (!cancelled) {
+          setDictations([]);
+          setIsLoading(false);
+        }
       }
     }, search ? 180 : 0);
     return () => {
       cancelled = true;
       window.clearTimeout(id);
     };
-  }, [search, favoritesOnly, refreshTick]);
+  }, [search, refreshTick]);
 
   useTauriEvent<unknown>("history-changed", () => {
     setRefreshTick((n) => n + 1);
   });
 
-  // Keyboard nav while history page is mounted.
+  const selected = useMemo(
+    () =>
+      selectedId != null ? dictations.find((d) => d.id === selectedId) ?? null : null,
+    [dictations, selectedId],
+  );
+  const selectedRef = useRef(selected);
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "f" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-        return;
-      }
-
-      if (document.activeElement === searchInputRef.current) {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          if (searchRef.current) {
-            setSearch("");
-          } else {
-            searchInputRef.current?.blur();
-          }
-        }
-        return;
-      }
-
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          moveSelection(1);
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          moveSelection(-1);
-          break;
-        case "Enter": {
-          e.preventDefault();
-          setSelectedIndex((curr) => {
-            if (curr < 0) return curr;
-            const id = dictationsRef.current[curr]?.id;
-            if (id !== undefined) toggleExpanded(id);
-            return curr;
-          });
-          break;
-        }
-        case "j":
-          if (!e.metaKey && !e.ctrlKey) {
-            e.preventDefault();
-            moveSelection(1);
-          }
-          break;
-        case "k":
-          if (!e.metaKey && !e.ctrlKey) {
-            e.preventDefault();
-            moveSelection(-1);
-          }
-          break;
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
+    selectedRef.current = selected;
+  }, [selected]);
 
   const moveSelection = useCallback((delta: number) => {
-    const len = dictationsRef.current.length;
-    if (len === 0) return;
-    setSelectedIndex((curr) => {
+    const list = dictationsRef.current;
+    if (list.length === 0) return;
+    setSelectedId((curr) => {
+      const idx = curr != null ? list.findIndex((d) => d.id === curr) : -1;
       const next =
-        curr < 0
+        idx < 0
           ? delta > 0
             ? 0
-            : len - 1
-          : Math.max(0, Math.min(len - 1, curr + delta));
-      window.requestAnimationFrame(() => {
-        const row = document.querySelector<HTMLElement>(
-          `.row[data-idx="${next}"]`,
-        );
-        row?.scrollIntoView({ block: "nearest" });
-      });
-      return next;
+            : list.length - 1
+          : Math.max(0, Math.min(list.length - 1, idx + delta));
+      return list[next].id;
     });
   }, []);
 
-  const toggleExpanded = useCallback((id: number) => {
-    setExpanded((curr) => {
-      const next = new Set(curr);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const onFavorite = useCallback(async (id: number) => {
+  const handleFavorite = useCallback(async () => {
+    const item = selectedRef.current;
+    if (!item) return;
     try {
-      const newValue = await commands.toggleFavorite(id);
+      const newValue = await commands.toggleFavorite(item.id);
       setDictations((curr) =>
-        curr.map((d) => (d.id === id ? { ...d, favorite: newValue } : d)),
+        curr.map((d) => (d.id === item.id ? { ...d, favorite: newValue } : d)),
       );
     } catch (err) {
       console.error("toggle_favorite failed", err);
     }
   }, []);
 
-  const onCopy = useCallback(async (id: number) => {
-    await commands.copyDictation(id);
+  const handleCopy = useCallback(async () => {
+    const item = selectedRef.current;
+    if (!item) return;
+    try {
+      await commands.copyDictation(item.id);
+      setCopyFlash(true);
+      window.setTimeout(() => setCopyFlash(false), 900);
+    } catch (err) {
+      console.error("copy_dictation failed", err);
+    }
   }, []);
 
-  const onPaste = useCallback(async (id: number) => {
+  const handlePaste = useCallback(async () => {
+    const item = selectedRef.current;
+    if (!item) return;
     try {
-      await commands.pasteDictation(id);
+      await commands.pasteDictation(item.id);
     } catch (err) {
       console.error("paste_dictation failed", err);
     }
   }, []);
 
-  const onDelete = useCallback(async (id: number) => {
+  const handleDeleteRequest = useCallback(() => {
+    const item = selectedRef.current;
+    if (item) setPendingDelete(item);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    const item = pendingDelete;
+    if (!item) return;
+    setPendingDelete(null);
     try {
-      await commands.deleteDictation(id);
-      setDictations((curr) => curr.filter((d) => d.id !== id));
-      setExpanded((curr) => {
-        if (!curr.has(id)) return curr;
-        const next = new Set(curr);
-        next.delete(id);
+      await commands.deleteDictation(item.id);
+      setDictations((curr) => {
+        const next = curr.filter((d) => d.id !== item.id);
+        // Move selection to the next item, or the previous if this was last.
+        setSelectedId((sid) => {
+          if (sid !== item.id) return sid;
+          const idx = curr.findIndex((d) => d.id === item.id);
+          return next[idx]?.id ?? next[idx - 1]?.id ?? null;
+        });
         return next;
       });
-      setSelectedIndex((curr) =>
-        Math.min(curr, dictationsRef.current.length - 2),
-      );
     } catch (err) {
       console.error("delete_dictation failed", err);
     }
-  }, []);
+  }, [pendingDelete]);
 
-  return (
-    <PageLayout
-      title="History"
-      actions={
-        <div className="flex items-center gap-2">
-          <div className="relative w-[220px]">
-            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint">
-              <SearchIcon />
-            </span>
-            <Input
-              ref={searchInputRef}
-              id="history-search"
-              type="search"
-              placeholder="Search dictations"
-              autoComplete="off"
-              spellCheck={false}
-              aria-label="Search dictations"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-7 h-8"
-            />
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Show favorites only"
-            aria-pressed={favoritesOnly}
-            onClick={() => setFavoritesOnly((f) => !f)}
-            className={favoritesOnly ? "text-accent-yellow" : ""}
-          >
-            <StarFilledIcon />
-          </Button>
-        </div>
+  // Page-level shortcuts: ⌘F search, ↑/↓ navigate, ⌘V paste, ⌘C copy, ⌘⌫ delete.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const inSearch = document.activeElement === searchInputRef.current;
+
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
       }
-    >
-      <HistoryList
+
+      if (inSearch) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          if (search) setSearch("");
+          else searchInputRef.current?.blur();
+        }
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        if (e.key === "v") {
+          e.preventDefault();
+          handlePaste();
+          return;
+        }
+        if (e.key === "c") {
+          e.preventDefault();
+          handleCopy();
+          return;
+        }
+        if (e.key === "Backspace") {
+          e.preventDefault();
+          handleDeleteRequest();
+          return;
+        }
+      }
+
+      switch (e.key) {
+        case "ArrowDown":
+        case "j":
+          if (e.metaKey || e.ctrlKey) return;
+          e.preventDefault();
+          moveSelection(1);
+          break;
+        case "ArrowUp":
+        case "k":
+          if (e.metaKey || e.ctrlKey) return;
+          e.preventDefault();
+          moveSelection(-1);
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [search, moveSelection, handlePaste, handleCopy, handleDeleteRequest]);
+
+  return (
+    <div className="hist-twocol">
+      <HistoryListPane
         dictations={dictations}
-        expanded={expanded}
-        selectedIndex={selectedIndex}
-        isFiltered={Boolean(search) || favoritesOnly}
-        onSelect={setSelectedIndex}
-        onToggleExpanded={toggleExpanded}
-        onFavorite={onFavorite}
-        onCopy={onCopy}
-        onPaste={onPaste}
-        onDelete={onDelete}
+        selectedId={selectedId}
+        search={search}
+        onSearchChange={setSearch}
+        onSelect={setSelectedId}
+        searchInputRef={searchInputRef}
+        isLoading={isLoading}
       />
-    </PageLayout>
-  );
-}
+      <HistoryDetailPane
+        dictation={selected}
+        onPaste={handlePaste}
+        onCopy={handleCopy}
+        onFavorite={handleFavorite}
+        onDelete={handleDeleteRequest}
+        copyFlash={copyFlash}
+        onAddedToVocab={onAddedToVocab}
+      />
 
-export function PageLayout({
-  title,
-  actions,
-  children,
-}: {
-  title: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <>
-      <header
-        data-tauri-drag-region
-        className="flex items-center justify-between px-6 py-3 border-b border-border min-h-[52px]"
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
       >
-        <h1 className="text-title font-semibold text-foreground m-0">
-          {title}
-        </h1>
-        <div data-tauri-drag-region="false">{actions}</div>
-      </header>
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {children}
-      </div>
-    </>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      className="text-faint shrink-0"
-      viewBox="0 0 16 16"
-      width="13"
-      height="13"
-      aria-hidden="true"
-    >
-      <path
-        fill="currentColor"
-        d="M11.74 10.32a6 6 0 1 0-1.42 1.42l3.47 3.47a1 1 0 0 0 1.42-1.42l-3.47-3.47ZM3 7a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z"
-      />
-    </svg>
-  );
-}
-
-function StarFilledIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21Z"
-      />
-    </svg>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this dictation?</DialogTitle>
+            <DialogDescription>
+              This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

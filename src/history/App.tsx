@@ -1,10 +1,7 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useTauriEvent, useThemeFromSettings } from "../lib/hooks";
-import {
-  SidebarInset,
-  SidebarProvider,
-} from "../components/ui/sidebar";
-import { Sidebar, type Section } from "./Sidebar";
+import { TooltipProvider } from "../components/ui/tooltip";
+import { IconRail, type Section } from "./IconRail";
 import { HistoryPage } from "./pages/HistoryPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
 import { VocabularyPage } from "./pages/VocabularyPage";
@@ -12,6 +9,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
   const [section, setSection] = useState<Section>("history");
+  const [vocabFocusId, setVocabFocusId] = useState<number | null>(null);
 
   useThemeFromSettings();
 
@@ -19,15 +17,34 @@ export function App() {
   // to the Settings section.
   useTauriEvent<unknown>("show-settings", () => setSection("settings"));
 
+  // Selecting "Add to vocabulary" in the History detail pane should both
+  // create the entry AND drop the user into Vocabulary with the new term
+  // selected, so they can add aliases without breaking flow.
+  const handleVocabAdded = useCallback((id: number) => {
+    setVocabFocusId(id);
+    setSection("vocabulary");
+  }, []);
+
   return (
-    <SidebarProvider>
-      <Sidebar section={section} onSectionChange={setSection} />
-      <SidebarInset className="relative">
-        {section === "history" && <HistoryPage />}
-        {section === "profiles" && <ProfilesPage />}
-        {section === "vocabulary" && <VocabularyPage />}
-        {section === "settings" && <SettingsPage />}
-      </SidebarInset>
-    </SidebarProvider>
+    <TooltipProvider delay={300}>
+      <div className="hist-shell">
+        {/* Title bar — spans full width so traffic lights overlay neatly. */}
+        <div className="hist-titlebar" data-tauri-drag-region />
+        <IconRail section={section} onSectionChange={setSection} />
+        <div className="hist-content">
+          {section === "history" && (
+            <HistoryPage onAddedToVocab={handleVocabAdded} />
+          )}
+          {section === "profiles" && <ProfilesPage />}
+          {section === "vocabulary" && (
+            <VocabularyPage
+              focusEntryId={vocabFocusId}
+              onFocusConsumed={() => setVocabFocusId(null)}
+            />
+          )}
+          {section === "settings" && <SettingsPage />}
+        </div>
+      </div>
+    </TooltipProvider>
   );
 }

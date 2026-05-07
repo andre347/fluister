@@ -9,19 +9,27 @@ import {
   type Theme,
 } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../../components/ui/tabs";
 import { GeneralPane } from "../panes/GeneralPane";
 import { RecordingPane } from "../panes/RecordingPane";
 import { ModelsPane } from "../panes/ModelsPane";
 import { AboutPane } from "../panes/AboutPane";
-import { PageLayout } from "./HistoryPage";
+import { cn } from "../../lib/utils";
 
 type SettingsTab = "general" | "recording" | "models" | "about";
+
+const TABS: { id: SettingsTab; label: string; hint: string }[] = [
+  { id: "general", label: "General", hint: "Theme, language, overlay position" },
+  { id: "recording", label: "Recording", hint: "Hotkey, mic, voice activity" },
+  { id: "models", label: "Models", hint: "Whisper sizes & Ollama" },
+  { id: "about", label: "About", hint: "Version & updates" },
+];
+
+const TAB_TITLE: Record<SettingsTab, string> = {
+  general: "General",
+  recording: "Recording",
+  models: "Models",
+  about: "About",
+};
 
 function applyTheme(theme: Theme) {
   const effective =
@@ -45,7 +53,6 @@ export function SettingsPage() {
   const saveTimer = useRef<number | undefined>(undefined);
   const statusTimer = useRef<number | undefined>(undefined);
 
-  // Load settings + whisper models on mount.
   useEffect(() => {
     let cancelled = false;
     Promise.all([commands.getSettings(), commands.listWhisperModels()])
@@ -190,36 +197,59 @@ export function SettingsPage() {
     refreshWhisperModels();
   });
 
-  // Listen for the popover's "Settings" entry — switch to the General tab.
   useTauriEvent<unknown>("show-settings", () => {
     setTab("general");
   });
 
   return (
-    <PageLayout title="Settings">
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as SettingsTab)}
-        className="flex-1 min-h-0 flex flex-col"
-      >
-        <TabsList className="mx-6 mt-4">
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="recording">Recording</TabsTrigger>
-          <TabsTrigger value="models">Models</TabsTrigger>
-          <TabsTrigger value="about">About</TabsTrigger>
-        </TabsList>
+    <div className="hist-twocol">
+      <div className="hist-list-pane">
+        <div className="hist-list-scroll scrollable">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              aria-pressed={tab === t.id}
+              className={cn(
+                "hist-list-row hist-list-row-tall",
+                tab === t.id && "hist-list-row-selected",
+              )}
+            >
+              <div className="text-item font-medium">{t.label}</div>
+              <div className="hist-list-row-text text-text-muted">{t.hint}</div>
+            </button>
+          ))}
+        </div>
+      </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 scrollable">
+      <div className="hist-detail">
+        <div className="hist-detail-header">
+          <div className="text-tag font-medium uppercase tracking-wider text-faint">
+            {TAB_TITLE[tab]}
+          </div>
+          <div
+            aria-live="polite"
+            className={cn(
+              "text-footnote text-text-muted transition-opacity",
+              statusMessage ? "opacity-100" : "opacity-0",
+            )}
+          >
+            {statusMessage ?? " "}
+          </div>
+        </div>
+
+        <div className="hist-detail-scroll">
           {settings ? (
-            <>
-              <TabsContent value="general">
+            <div className="max-w-[640px]">
+              {tab === "general" && (
                 <GeneralPane
                   settings={settings}
                   updateSettings={updateSettings}
                   onThemeChange={handleThemeChange}
                 />
-              </TabsContent>
-              <TabsContent value="recording">
+              )}
+              {tab === "recording" && (
                 <RecordingPane
                   settings={settings}
                   updateSettings={updateSettings}
@@ -229,8 +259,8 @@ export function SettingsPage() {
                   onDownloadModel={beginDownload}
                   onSwitchToModelsSection={() => setTab("models")}
                 />
-              </TabsContent>
-              <TabsContent value="models">
+              )}
+              {tab === "models" && (
                 <ModelsPane
                   settings={settings}
                   updateSettings={updateSettings}
@@ -239,23 +269,14 @@ export function SettingsPage() {
                   onSwitchModel={useWhisperModel}
                   onDownloadModel={beginDownload}
                 />
-              </TabsContent>
-              <TabsContent value="about">
-                <AboutPane />
-              </TabsContent>
-            </>
-          ) : null}
-
-          <div
-            aria-live="polite"
-            className={`mt-4 text-xs text-muted-foreground transition-opacity ${
-              statusMessage ? "opacity-100" : "opacity-0"
-            }`}
-          >
-            {statusMessage ?? ""}
-          </div>
+              )}
+              {tab === "about" && <AboutPane />}
+            </div>
+          ) : (
+            <div className="text-text-muted text-footnote">Loading…</div>
+          )}
         </div>
-      </Tabs>
-    </PageLayout>
+      </div>
+    </div>
   );
 }

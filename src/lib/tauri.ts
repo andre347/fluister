@@ -129,6 +129,7 @@ export const commands = {
 
   // Onboarding
   onboardingStatus: () => invoke<OnboardingStatus>("onboarding_status"),
+  showOnboardingWindow: () => invoke<void>("show_onboarding_window"),
   requestMicrophoneAccess: () =>
     invoke<MicStatus>("request_microphone_access"),
   openPrivacyPanel: (panel: PrivacyPanel) =>

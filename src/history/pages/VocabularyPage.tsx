@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Trash2, X } from "lucide-react";
 import { commands, type VocabularyEntry } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
 import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -10,209 +12,269 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { Input } from "../../components/ui/input";
-import { PageLayout } from "./HistoryPage";
+import { cn } from "../../lib/utils";
 
-export function VocabularyPage() {
+const NEW_KEY = "__new__";
+type Selection = number | typeof NEW_KEY | null;
+
+type Props = {
+  /** When set, the Vocabulary page selects this entry on mount and clears
+   *  the intent via `onFocusConsumed`. Used by History's "Add to vocabulary"
+   *  flow to drop the user straight onto the new term. */
+  focusEntryId?: number | null;
+  onFocusConsumed?: () => void;
+};
+
+export function VocabularyPage({
+  focusEntryId = null,
+  onFocusConsumed,
+}: Props) {
   const [entries, setEntries] = useState<VocabularyEntry[]>([]);
-  const [editingId, setEditingId] = useState<number | "new" | null>(null);
+  const [search, setSearch] = useState("");
+  const [selection, setSelection] = useState<Selection>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [pendingDelete, setPendingDelete] = useState<VocabularyEntry | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     commands
       .listVocabulary()
       .then((items) => {
-        if (!cancelled) setEntries(items);
+        if (cancelled) return;
+        setEntries(items);
+        setSelection((curr) => {
+          // A pending focus from History's "Add to vocabulary" wins.
+          if (
+            focusEntryId !== null &&
+            items.some((e) => e.id === focusEntryId)
+          ) {
+            return focusEntryId;
+          }
+          if (curr === NEW_KEY) return curr;
+          if (typeof curr === "number" && items.some((e) => e.id === curr))
+            return curr;
+          return items[0]?.id ?? null;
+        });
+        if (focusEntryId !== null) onFocusConsumed?.();
       })
       .catch((err) => console.error("list_vocabulary failed", err));
     return () => {
       cancelled = true;
     };
-  }, [refreshTick]);
+  }, [refreshTick, focusEntryId, onFocusConsumed]);
 
   useTauriEvent<unknown>("vocabulary-changed", () => {
     setRefreshTick((n) => n + 1);
   });
 
-  const handleDelete = useCallback(async (id: number) => {
-    if (!window.confirm("Delete this entry?")) return;
+  const handleDeleteConfirm = useCallback(async () => {
+    const target = pendingDelete;
+    if (!target) return;
+    setPendingDelete(null);
     try {
-      await commands.deleteVocabularyEntry(id);
+      await commands.deleteVocabularyEntry(target.id);
+      setSelection((curr) => (curr === target.id ? null : curr));
     } catch (err) {
       console.error("delete_vocabulary_entry failed", err);
     }
-  }, []);
+  }, [pendingDelete]);
 
-  const editing =
-    editingId === "new"
-      ? { id: 0, term: "", aliases: [], created_at: 0 }
-      : editingId !== null
-        ? entries.find((e) => e.id === editingId) ?? null
-        : null;
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(
+      (e) =>
+        e.term.toLowerCase().includes(q) ||
+        e.aliases.some((a) => a.toLowerCase().includes(q)),
+    );
+  }, [entries, search]);
+
+  const selectedEntry = useMemo<VocabularyEntry | null>(() => {
+    if (selection === NEW_KEY) return null;
+    if (typeof selection === "number") {
+      return entries.find((e) => e.id === selection) ?? null;
+    }
+    return null;
+  }, [entries, selection]);
 
   return (
-    <PageLayout
-      title="Vocabulary"
-      actions={
-        <Button size="sm" onClick={() => setEditingId("new")}>
-          + New term
-        </Button>
-      }
-    >
-      <div className="flex-1 overflow-y-auto px-6 py-4 scrollable">
-        <p className="text-footnote text-muted-foreground mb-4 max-w-[640px]">
-          Terms are biased into Whisper's initial prompt for accurate
-          transcription. Aliases are replaced with the canonical term in the
-          cleaned output — e.g.{" "}
-          <code className="bg-elev px-1 py-0.5 rounded">type script</code> →{" "}
-          <code className="bg-elev px-1 py-0.5 rounded">TypeScript</code>.
-        </p>
-        <div className="flex flex-col gap-2 max-w-[640px]">
-          {entries.map((entry) => (
-            <VocabularyRow
-              key={entry.id}
-              entry={entry}
-              onEdit={() => setEditingId(entry.id)}
-              onDelete={() => handleDelete(entry.id)}
-            />
-          ))}
-          {entries.length === 0 && (
-            <p className="text-muted-foreground text-body">
-              No vocabulary entries yet. Add a term to start improving
-              transcription accuracy.
-            </p>
-          )}
+    <div className="hist-twocol">
+      <div className="hist-list-pane">
+        <div className="hist-list-toolbar">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="w-full justify-start gap-2 h-8 text-item"
+            onClick={() => setSelection(NEW_KEY)}
+            aria-pressed={selection === NEW_KEY}
+          >
+            <Plus size={13} aria-hidden />
+            <span>New term</span>
+          </Button>
         </div>
-      </div>
-
-      <VocabularyEditor
-        open={editing !== null}
-        onOpenChange={(open) => !open && setEditingId(null)}
-        entry={editing}
-        isNew={editingId === "new"}
-        onSaved={() => {
-          setEditingId(null);
-          setRefreshTick((n) => n + 1);
-        }}
-      />
-    </PageLayout>
-  );
-}
-
-function VocabularyRow({
-  entry,
-  onEdit,
-  onDelete,
-}: {
-  entry: VocabularyEntry;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-card">
-      <div className="flex items-start gap-3 p-4">
-        <div className="flex-1 min-w-0">
-          <div className="text-body font-medium text-foreground">
-            {entry.term}
-          </div>
-          {entry.aliases.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {entry.aliases.map((a, i) => (
-                <span
-                  key={`${a}-${i}`}
-                  className="text-footnote text-muted-foreground bg-elev rounded px-1.5 py-0.5"
-                >
-                  {a}
-                </span>
-              ))}
+        <div className="hist-list-search">
+          <SearchIcon />
+          <Input
+            ref={searchRef}
+            type="search"
+            placeholder="Search vocabulary"
+            autoComplete="off"
+            spellCheck={false}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-7 pl-6 text-footnote bg-transparent border-0 shadow-none focus-visible:ring-0"
+          />
+        </div>
+        <div className="hist-list-scroll scrollable">
+          {filtered.length === 0 && selection !== NEW_KEY ? (
+            <div className="hist-list-empty">
+              {search ? "No matches" : "No vocabulary terms yet"}
+            </div>
+          ) : (
+            filtered.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => setSelection(entry.id)}
+                aria-pressed={selection === entry.id}
+                className={cn(
+                  "hist-list-row",
+                  selection === entry.id && "hist-list-row-selected",
+                )}
+              >
+                <div className="text-item font-medium truncate">
+                  {entry.term}
+                </div>
+                {entry.aliases.length > 0 && (
+                  <div className="hist-list-row-text text-text-muted">
+                    {entry.aliases.join(", ")}
+                  </div>
+                )}
+              </button>
+            ))
+          )}
+          {selection === NEW_KEY && (
+            <div className="hist-list-row hist-list-row-selected">
+              <div className="text-item font-medium italic text-text-muted">
+                New term…
+              </div>
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Button variant="ghost" size="sm" onClick={onEdit}>
-            Edit
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Delete entry"
-            onClick={onDelete}
-          >
-            <TrashIcon />
-          </Button>
-        </div>
       </div>
+
+      {selection === null ? (
+        <div className="hist-detail-empty">
+          <span>Select a term to edit, or create a new one.</span>
+        </div>
+      ) : selection === NEW_KEY ? (
+        <VocabularyEditor
+          key="new"
+          isNew
+          entry={null}
+          onDelete={() => {}}
+          onSaved={(saved) => {
+            setRefreshTick((n) => n + 1);
+            setSelection(saved.id);
+          }}
+          onCancel={() => setSelection(entries[0]?.id ?? null)}
+        />
+      ) : selectedEntry ? (
+        <VocabularyEditor
+          key={selectedEntry.id}
+          isNew={false}
+          entry={selectedEntry}
+          onDelete={() => setPendingDelete(selectedEntry)}
+          onSaved={() => setRefreshTick((n) => n + 1)}
+        />
+      ) : (
+        <div className="hist-detail-empty">
+          <span>Term not found.</span>
+        </div>
+      )}
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete term?</DialogTitle>
+            <DialogDescription>
+              {pendingDelete ? `“${pendingDelete.term}” will be removed.` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 function VocabularyEditor({
-  open,
-  onOpenChange,
-  entry,
   isNew,
+  entry,
+  onDelete,
   onSaved,
+  onCancel,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  isNew: boolean;
   entry: VocabularyEntry | null;
-  isNew: boolean;
-  onSaved: () => void;
+  onDelete: () => void;
+  onSaved: (saved: VocabularyEntry) => void;
+  onCancel?: () => void;
 }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
-        {entry && (
-          <VocabularyEditorBody
-            key={entry.id || "new"}
-            entry={entry}
-            isNew={isNew}
-            onClose={() => onOpenChange(false)}
-            onSaved={onSaved}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function VocabularyEditorBody({
-  entry,
-  isNew,
-  onClose,
-  onSaved,
-}: {
-  entry: VocabularyEntry;
-  isNew: boolean;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [term, setTerm] = useState(entry.term);
-  const [aliasesText, setAliasesText] = useState(entry.aliases.join(", "));
+  const baseline = entry ?? { term: "", aliases: [] as string[] };
+  const [term, setTerm] = useState(baseline.term);
+  const [aliases, setAliases] = useState<string[]>(baseline.aliases);
+  const [aliasDraft, setAliasDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const dirty =
+    term !== baseline.term ||
+    aliases.join("|") !== baseline.aliases.join("|");
+  const canSave = term.trim().length > 0 && (isNew || dirty) && !saving;
+
+  const addAlias = () => {
+    const next = aliasDraft.trim();
+    if (!next || aliases.includes(next)) {
+      setAliasDraft("");
+      return;
+    }
+    setAliases((curr) => [...curr, next]);
+    setAliasDraft("");
+  };
+
+  const removeAlias = (alias: string) => {
+    setAliases((curr) => curr.filter((a) => a !== alias));
+  };
+
   const handleSave = async () => {
-    if (!term.trim()) return;
-    const aliases = aliasesText
-      .split(/[,\n]/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    if (!canSave) return;
     setSaving(true);
     try {
       if (isNew) {
-        await commands.createVocabularyEntry({
+        const created = await commands.createVocabularyEntry({
           term: term.trim(),
           aliases,
         });
-      } else {
+        onSaved(created);
+      } else if (entry) {
         await commands.updateVocabularyEntry({
           id: entry.id,
           term: term.trim(),
           aliases,
         });
+        onSaved({ ...entry, term: term.trim(), aliases });
       }
-      onSaved();
     } catch (err) {
       console.error("save vocabulary failed", err);
     } finally {
@@ -221,61 +283,121 @@ function VocabularyEditorBody({
   };
 
   return (
-    <>
-      <DialogHeader>
-        <DialogTitle>{isNew ? "New term" : `Edit ${entry.term}`}</DialogTitle>
-        <DialogDescription>
-          The term seeds Whisper's transcription bias. Aliases are
-          replaced with the term in cleaned output.
-        </DialogDescription>
-      </DialogHeader>
-
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <div className="text-body font-medium text-foreground">Term</div>
-          <div className="text-footnote text-muted-foreground -mt-1">
-            The canonical spelling (output).
-          </div>
-          <Input
-            value={term}
-            onChange={(e) => setTerm(e.target.value)}
-            placeholder="TypeScript"
-            autoFocus
-          />
+    <div className="hist-detail">
+      <div className="hist-detail-header">
+        <div className="text-tag font-medium uppercase tracking-wider text-faint">
+          {isNew ? "New term" : "Edit term"}
+          {dirty && !isNew && (
+            <span className="ml-2 normal-case text-text-muted tracking-normal">
+              · Unsaved
+            </span>
+          )}
         </div>
-
-        <div className="flex flex-col gap-1.5">
-          <div className="text-body font-medium text-foreground">Aliases</div>
-          <div className="text-footnote text-muted-foreground -mt-1">
-            Comma-separated. Each alias is replaced with the term above.
-            Match is case-insensitive at word boundaries.
-          </div>
-          <Input
-            value={aliasesText}
-            onChange={(e) => setAliasesText(e.target.value)}
-            placeholder="type script, typescript"
-          />
+        <div className="flex items-center gap-1.5">
+          {isNew && onCancel && (
+            <Button variant="ghost" size="sm" onClick={onCancel} className="h-8">
+              Cancel
+            </Button>
+          )}
+          {!isNew && entry && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              title="Delete"
+              className="h-8 w-9 px-0 text-text-muted hover:text-[color:var(--color-danger)]"
+            >
+              <Trash2 size={14} aria-hidden />
+            </Button>
+          )}
+          <Button onClick={handleSave} disabled={!canSave} size="sm" className="h-8">
+            {saving ? "Saving…" : isNew ? "Create" : "Save"}
+          </Button>
         </div>
       </div>
 
-      <DialogFooter>
-        <Button variant="ghost" onClick={onClose} disabled={saving}>
-          Cancel
-        </Button>
-        <Button onClick={handleSave} disabled={saving || !term.trim()}>
-          {saving ? "Saving…" : isNew ? "Create" : "Save"}
-        </Button>
-      </DialogFooter>
-    </>
+      <div className="hist-detail-scroll">
+        <div className="flex flex-col gap-5 max-w-[560px]">
+          <div className="flex flex-col gap-2">
+            <div>
+              <div className="text-body font-medium text-foreground">Term</div>
+              <div className="text-footnote text-muted-foreground leading-snug mt-1">
+                The canonical spelling. Whisper biases toward this; cleanup
+                replaces aliases with it.
+              </div>
+            </div>
+            <Input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="TypeScript"
+              autoFocus={isNew}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div>
+              <div className="text-body font-medium text-foreground">Aliases</div>
+              <div className="text-footnote text-muted-foreground leading-snug mt-1">
+                Spellings that should be replaced with the term above. Match is
+                case-insensitive at word boundaries.
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {aliases.map((a) => (
+                <span
+                  key={a}
+                  className="inline-flex items-center gap-1 rounded-md bg-[color:var(--color-elev)] px-2 h-7 text-caption text-foreground"
+                >
+                  <span>{a}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove alias ${a}`}
+                    onClick={() => removeAlias(a)}
+                    className="text-text-muted hover:text-foreground"
+                  >
+                    <X size={11} aria-hidden />
+                  </button>
+                </span>
+              ))}
+              <Input
+                value={aliasDraft}
+                onChange={(e) => setAliasDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    addAlias();
+                  } else if (
+                    e.key === "Backspace" &&
+                    aliasDraft === "" &&
+                    aliases.length > 0
+                  ) {
+                    setAliases((curr) => curr.slice(0, -1));
+                  }
+                }}
+                onBlur={addAlias}
+                placeholder={aliases.length === 0 ? "type script, typescript…" : "add alias…"}
+                className="h-7 w-[180px] text-caption"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
-function TrashIcon() {
+function SearchIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+    <svg
+      className="absolute left-1.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none"
+      viewBox="0 0 16 16"
+      width="11"
+      height="11"
+      aria-hidden="true"
+    >
       <path
         fill="currentColor"
-        d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4Z"
+        d="M11.74 10.32a6 6 0 1 0-1.42 1.42l3.47 3.47a1 1 0 0 0 1.42-1.42l-3.47-3.47ZM3 7a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z"
       />
     </svg>
   );

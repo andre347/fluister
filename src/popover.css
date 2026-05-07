@@ -13,8 +13,6 @@ html, body {
   cursor: default;
 }
 
-/* React mount point — must fill body so .popover's height: 100% resolves
-   against the window, not an auto-height div. */
 #root {
   height: 100%;
   width: 100%;
@@ -38,7 +36,6 @@ html, body {
   animation: pop-in 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* Subtle inner highlight at the very top — "lit glass" */
 .popover::before {
   content: "";
   position: absolute;
@@ -52,11 +49,11 @@ html, body {
 .menu-section {
   display: flex;
   flex-direction: column;
-  padding: 4px 0;
+  padding: 6px 0;
 }
 
 .menu-caption {
-  padding: 6px 16px 2px;
+  padding: 8px 18px 4px;
   font-size: var(--text-meta);
   font-weight: 500;
   color: var(--color-faint);
@@ -65,10 +62,9 @@ html, body {
 .menu-separator {
   height: 1px;
   background: var(--color-separator);
-  margin: 0 12px;
+  margin: 2px 14px;
 }
 
-/* === Menu list (Recents) === */
 .menu-list {
   display: flex;
   flex-direction: column;
@@ -85,21 +81,20 @@ html, body {
 .menu-list::-webkit-scrollbar-track { background: transparent; }
 
 .menu-empty {
-  padding: 12px 16px;
+  padding: 14px 18px;
   font-size: var(--text-meta);
   color: var(--color-faint);
   text-align: center;
 }
 
-/* === Menu item — the universal row component ===
-   Buttons and divs use the same class so the visual hierarchy is uniform. */
+/* === Menu item — universal row component === */
 .menu-item {
   display: block;
   width: 100%;
   text-align: left;
   background: transparent;
   border: none;
-  padding: 7px 16px;
+  padding: 9px 18px;
   font-size: var(--text-item);
   font-weight: 400;
   font-family: inherit;
@@ -118,10 +113,9 @@ button.menu-item:hover:not(.disabled) {
   pointer-events: none;
 }
 
-/* Recent rows have a primary line + meta line */
 .menu-item.recent {
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-top: 7px;
+  padding-bottom: 7px;
 }
 .menu-item.recent .text {
   display: block;
@@ -135,10 +129,9 @@ button.menu-item:hover:not(.disabled) {
   display: block;
   font-size: var(--text-meta);
   color: var(--color-text-muted);
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
-/* Click-to-copy feedback flash for recents */
 .menu-item.recent.flash {
   background: color-mix(in oklch, var(--color-success) 26%, transparent);
 }
@@ -148,7 +141,6 @@ button.menu-item:hover:not(.disabled) {
   font-weight: 500;
 }
 
-/* "Checking…" state on the update-status row uses an italic feel */
 .menu-item.checking {
   color: var(--color-text-muted);
 }

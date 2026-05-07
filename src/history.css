@@ -11,8 +11,6 @@ html, body {
   overflow: hidden;
 }
 
-/* React mount point — must fill body and provide the flex column layout
-   the old <body class="flex flex-col h-full"> used to provide. */
 #root {
   height: 100%;
   width: 100%;
@@ -24,7 +22,6 @@ input, button, textarea, select { font-family: inherit; }
 input[type="search"]::-webkit-search-cancel-button { appearance: none; -webkit-appearance: none; }
 input::placeholder, textarea::placeholder { color: var(--color-faint); }
 
-/* Focus rings — macOS style */
 *:focus           { outline: none; }
 *:focus-visible   { outline: none; }
 
@@ -33,7 +30,6 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-/* Custom scrollbar */
 .scrollable::-webkit-scrollbar { width: 8px; }
 .scrollable::-webkit-scrollbar-thumb {
   background: light-dark(rgba(0,0,0,0.18), rgba(255,255,255,0.10));
@@ -42,115 +38,242 @@ button:focus-visible {
 .scrollable::-webkit-scrollbar-track { background: transparent; }
 
 /* ──────────────────────────────────────────────────────────────────────
-   List
+   Shell — three-pane Mail.app shape:
+     Row 1: 28pt traffic-light carve (full-width drag region)
+     Row 2: rail + content
+     Cols : 44pt rail | flex content (which itself splits into list + detail)
    ────────────────────────────────────────────────────────────────────── */
+.hist-shell {
+  display: grid;
+  grid-template-rows: 28px 1fr;
+  grid-template-columns: 44px 1fr;
+  height: 100%;
+  width: 100%;
+  background: var(--color-canvas);
+}
 
-.group-header {
+.hist-titlebar {
+  grid-row: 1;
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--color-separator);
+  background: color-mix(in oklch, var(--color-canvas) 92%, transparent);
+}
+
+.hist-rail {
+  grid-row: 2;
+  grid-column: 1;
+  border-right: 1px solid var(--color-separator);
+  background: var(--color-sidebar);
+  padding: 12px 0 14px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.hist-content {
+  grid-row: 2;
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* History page splits content into list + detail */
+.hist-twocol {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   List pane (220pt)
+   ────────────────────────────────────────────────────────────────────── */
+.hist-list-pane {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-separator);
+  min-height: 0;
+  background: color-mix(in oklch, var(--color-canvas) 97%, transparent);
+}
+
+.hist-list-search {
+  position: relative;
+  padding: 10px 12px 10px 12px;
+  border-bottom: 1px solid var(--color-separator);
+}
+
+/* Toolbar at the top of a list pane (e.g. "+ New profile" / "+ New term"). */
+.hist-list-toolbar {
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--color-separator);
+}
+
+/* Tall variant of list rows for tabs that show name + sub-meta (Profiles,
+   Settings sub-tabs). */
+.hist-list-row-tall {
+  padding: 12px 14px;
+}
+
+.hist-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.hist-list-empty {
+  padding: 16px;
+  font-size: var(--text-footnote);
+  color: var(--color-faint);
+  text-align: center;
+}
+
+.hist-list-group {
   position: sticky;
   top: 0;
   z-index: 1;
-  font-size: var(--text-footnote);
+  font-size: var(--text-tag);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   color: var(--color-text-muted);
   text-transform: uppercase;
-  padding: 14px 16px 6px 16px;
+  padding: 14px 14px 6px 14px;
   background: color-mix(in oklch, var(--color-canvas) 92%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
-.group-header:first-child { padding-top: 8px; }
 
-.row {
-  --row-bg: transparent;
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 1px 6px;
-  padding: 7px 12px;
-  border-radius: 8px;
+.hist-list-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed color-mix(in oklch, var(--color-separator) 80%, transparent);
+  padding: 11px 14px;
   cursor: default;
-  background: var(--row-bg);
-  transition: background-color 100ms var(--ease-default);
+  font-family: inherit;
+  color: var(--color-fg);
+  transition: background-color 80ms var(--ease-default);
 }
-.row:hover                       { --row-bg: var(--color-hover); }
-.row.expanded                    { --row-bg: var(--color-active); }
-.row[aria-selected="true"]       { --row-bg: var(--color-selected); }
-.row[aria-selected="true"]:hover { --row-bg: color-mix(in oklch, var(--color-selected) 70%, var(--color-hover)); }
+.hist-list-row:hover {
+  background: var(--color-hover);
+}
+.hist-list-row-selected,
+.hist-list-row-selected:hover {
+  background: color-mix(in oklch, var(--color-brand) 28%, transparent);
+}
 
-.row-body { flex: 1; min-width: 0; }
-.row-text {
-  font-size: var(--text-body);
+.hist-list-row-text {
+  font-size: var(--text-footnote);
   line-height: 1.45;
   color: var(--color-fg);
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  word-break: break-word;
-}
-.row.expanded .row-text {
-  -webkit-line-clamp: unset;
-  display: block;
-  white-space: pre-wrap;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
 }
 
-.row-meta { font-size: var(--text-footnote); color: var(--color-text-muted); margin-top: 3px; }
-
-.row-actions {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%);
+/* ──────────────────────────────────────────────────────────────────────
+   Detail pane
+   ────────────────────────────────────────────────────────────────────── */
+.hist-detail {
   display: flex;
-  align-items: center;
-  gap: 1px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 80ms var(--ease-default);
-}
-.row-actions::before {
-  content: "";
-  position: absolute;
-  left: -28px;
-  top: 0;
-  bottom: 0;
-  width: 28px;
-  background: linear-gradient(to right, transparent, var(--row-bg) 70%);
-  pointer-events: none;
-}
-.row:hover .row-actions,
-.row.expanded .row-actions,
-.row[aria-selected="true"] .row-actions {
-  opacity: 1;
-  pointer-events: auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
-.row-action {
-  width: 22px;
-  height: 22px;
+.hist-detail-empty {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  border-radius: 5px;
-  transition: background-color 100ms var(--ease-default), color 100ms var(--ease-default);
-}
-.row-action:hover         { background: var(--color-active); color: var(--color-fg); }
-.row-action.danger:hover  { color: var(--color-danger); }
-.row-action.ok,
-.row-action.ok:hover      { color: var(--color-success); background: transparent; }
-.row-action.on,
-.row-action.on:hover      { color: var(--color-accent-yellow); }
-
-.empty-icon {
-  width: 44px;
-  height: 44px;
+  font-size: var(--text-footnote);
   color: var(--color-faint);
-  opacity: 0.7;
-  margin-bottom: 14px;
+}
+
+.hist-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--color-separator);
+  flex-wrap: wrap;
+}
+
+.hist-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 24px 24px 24px;
+}
+
+.hist-detail-body {
+  font-size: var(--text-body);
+  line-height: 1.55;
+  color: var(--color-fg);
+  user-select: text;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hist-detail-separator {
+  height: 1px;
+  background: var(--color-separator);
+  margin: 16px 0 12px 0;
+}
+
+.hist-detail-raw {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-separator);
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--color-elev) 50%, transparent);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--text-footnote);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  user-select: text;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* "Add to vocabulary" floating chip — anchored to the user's text selection.
+   Position: fixed because the rect comes from getBoundingClientRect (viewport
+   coords). Pointer-events stay enabled so the user can click; the chip
+   dismisses itself when the selection changes or the pane scrolls. */
+.hist-vocab-floater {
+  position: fixed;
+  z-index: 50;
+  animation: vocab-floater-in 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.hist-vocab-toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--color-fg);
+  color: var(--color-canvas);
+  font-size: var(--text-footnote);
+  padding: 8px 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  animation: vocab-toast-in 160ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  pointer-events: none;
+}
+
+@keyframes vocab-floater-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes vocab-toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
 }

@@ -14,7 +14,14 @@ interface StatusPayload {
   message?: string | null;
 }
 
-const BAR_COUNT = 7;
+const BAR_COUNT = 12;
+
+function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 export function App() {
   const [state, setState] = useState<OverlayState>("idle");
@@ -32,11 +39,20 @@ export function App() {
   const recMixRef = useRef(0);
   const shimMixRef = useRef(0);
   const barRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const timerRef = useRef<HTMLSpanElement | null>(null);
+  const recordingStartRef = useRef<number | null>(null);
 
   useTauriEvent<StatusPayload>("status", (e) => {
-    setState(e.payload.state);
-    if (e.payload.state !== "recording") {
+    const next = e.payload.state;
+    setState(next);
+    if (next !== "recording") {
       levelHistoryRef.current.fill(0);
+    }
+    if (next === "recording") {
+      recordingStartRef.current = performance.now();
+      if (timerRef.current) timerRef.current.textContent = "0:00";
+    } else {
+      recordingStartRef.current = null;
     }
   });
 
@@ -47,6 +63,18 @@ export function App() {
     buf.shift();
     buf.push(lvl);
   });
+
+  // Timer — drive via interval + DOM mutation so the React tree never
+  // re-renders during a recording. 250ms is a comfortable cadence for
+  // second precision.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const start = recordingStartRef.current;
+      if (start == null || !timerRef.current) return;
+      timerRef.current.textContent = formatElapsed(performance.now() - start);
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let rafId = 0;
@@ -62,7 +90,7 @@ export function App() {
       shimMixRef.current += ((wantsShim ? 1 : 0) - shimMixRef.current) * 0.12;
 
       for (let i = 0; i < BAR_COUNT; i++) {
-        // Per-bar phase offset so neighboring bars don't move in lockstep.
+        // Per-bar phase offset so neighbouring bars don't move in lockstep.
         const phase = i * 0.55;
 
         // Always-on subtle breathing — keeps the wave alive at idle and
@@ -106,9 +134,16 @@ export function App() {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
+  const isRecording = state === "recording";
+
   return (
     <div id="pill" className="pill" data-state={state}>
       <div className="glass" />
+      <span
+        className="dot"
+        aria-hidden
+        data-visible={isRecording ? "true" : "false"}
+      />
       <div className="wave">
         {Array.from({ length: BAR_COUNT }, (_, i) => (
           <span
@@ -120,6 +155,14 @@ export function App() {
           />
         ))}
       </div>
+      <span
+        className="timer"
+        ref={timerRef}
+        aria-hidden
+        data-visible={isRecording ? "true" : "false"}
+      >
+        0:00
+      </span>
     </div>
   );
 }
