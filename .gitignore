@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local skill cache (skills-lock.json is committed; the cache itself isn't)
+.agents/
+
+# Icon working files (one-off backups)
+src-tauri/icons/app-icon-original.png
