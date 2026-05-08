@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import { commands, type Profile } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
 import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Textarea } from "../../components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -10,15 +13,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../components/ui/dialog";
-import { Input } from "../../components/ui/input";
-import { Textarea } from "../../components/ui/textarea";
-import { PageLayout } from "./HistoryPage";
+import { cn } from "../../lib/utils";
+
+const NEW_KEY = "__new__";
+type Selection = number | typeof NEW_KEY | null;
 
 export function ProfilesPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [editingId, setEditingId] = useState<number | "new" | null>(null);
+  const [selection, setSelection] = useState<Selection>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [pendingDelete, setPendingDelete] = useState<Profile | null>(null);
 
   // Load profiles + active profile id whenever changed.
   useEffect(() => {
@@ -28,6 +33,12 @@ export function ProfilesPage() {
         if (cancelled) return;
         setProfiles(profs);
         setActiveId(settings.active_profile_id);
+        // Default selection: keep current if still present, else first profile.
+        setSelection((curr) => {
+          if (curr === NEW_KEY) return curr;
+          if (typeof curr === "number" && profs.some((p) => p.id === curr)) return curr;
+          return profs[0]?.id ?? null;
+        });
       })
       .catch((err) => console.error("profiles load failed", err));
     return () => {
@@ -42,191 +53,205 @@ export function ProfilesPage() {
   const handleSetActive = useCallback(async (id: number) => {
     try {
       await commands.setActiveProfile(id);
+      setActiveId(id);
     } catch (err) {
       console.error("set_active_profile failed", err);
     }
   }, []);
 
-  const handleDelete = useCallback(async (id: number) => {
-    if (!window.confirm("Delete this profile?")) return;
+  const handleDeleteConfirm = useCallback(async () => {
+    const target = pendingDelete;
+    if (!target) return;
+    setPendingDelete(null);
     try {
-      await commands.deleteProfile(id);
+      await commands.deleteProfile(target.id);
+      setSelection((curr) => (curr === target.id ? null : curr));
     } catch (err) {
       console.error("delete_profile failed", err);
     }
-  }, []);
+  }, [pendingDelete]);
 
-  const editing =
-    editingId === "new"
-      ? { id: 0, name: "", description: "", style_prompt: "", vocabulary: "", created_at: 0 }
-      : editingId !== null
-        ? profiles.find((p) => p.id === editingId) ?? null
-        : null;
+  const selectedProfile = useMemo<Profile | null>(() => {
+    if (selection === NEW_KEY) return null;
+    if (typeof selection === "number") {
+      return profiles.find((p) => p.id === selection) ?? null;
+    }
+    return null;
+  }, [profiles, selection]);
 
   return (
-    <PageLayout
-      title="Profiles"
-      actions={
-        <Button size="sm" onClick={() => setEditingId("new")}>
-          + New profile
-        </Button>
-      }
-    >
-      <div className="flex-1 overflow-y-auto px-6 py-4 scrollable">
-        <div className="flex flex-col gap-2 max-w-[640px]">
-          {profiles.map((p) => (
-            <ProfileRow
-              key={p.id}
-              profile={p}
-              isActive={p.id === activeId}
-              onEdit={() => setEditingId(p.id)}
-              onSetActive={() => handleSetActive(p.id)}
-              onDelete={() => handleDelete(p.id)}
-            />
-          ))}
-          {profiles.length === 0 && (
-            <p className="text-muted-foreground text-body">
-              No profiles yet. Create one to get started.
-            </p>
+    <div className="hist-twocol">
+      <div className="hist-list-pane">
+        <div className="hist-list-toolbar">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="w-full justify-start gap-2 h-8 text-item"
+            onClick={() => setSelection(NEW_KEY)}
+            aria-pressed={selection === NEW_KEY}
+          >
+            <Plus size={13} aria-hidden />
+            <span>New profile</span>
+          </Button>
+        </div>
+        <div className="hist-list-scroll scrollable">
+          {profiles.length === 0 && selection !== NEW_KEY ? (
+            <div className="hist-list-empty">No profiles yet</div>
+          ) : (
+            profiles.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setSelection(p.id)}
+                aria-pressed={selection === p.id}
+                className={cn(
+                  "hist-list-row hist-list-row-tall",
+                  selection === p.id && "hist-list-row-selected",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-item font-medium truncate">
+                    {p.name}
+                  </span>
+                  {p.id === activeId && (
+                    <span className="text-tag font-medium uppercase tracking-wider text-[color:var(--color-brand)] shrink-0">
+                      Active
+                    </span>
+                  )}
+                </div>
+                {p.description && (
+                  <div className="hist-list-row-text">{p.description}</div>
+                )}
+              </button>
+            ))
+          )}
+          {selection === NEW_KEY && (
+            <div className="hist-list-row hist-list-row-selected hist-list-row-tall">
+              <div className="text-item font-medium italic text-text-muted">
+                New profile…
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      <ProfileEditor
-        open={editing !== null}
-        onOpenChange={(open) => !open && setEditingId(null)}
-        profile={editing}
-        isNew={editingId === "new"}
-        onSaved={() => {
-          setEditingId(null);
-          setRefreshTick((n) => n + 1);
-        }}
-      />
-    </PageLayout>
+      {selection === null ? (
+        <EmptyDetail label="Select a profile to edit, or create a new one." />
+      ) : selection === NEW_KEY ? (
+        <ProfileEditor
+          key="new"
+          isNew
+          profile={null}
+          isActive={false}
+          onSetActive={() => {}}
+          onDelete={() => {}}
+          onSaved={(created) => {
+            setRefreshTick((n) => n + 1);
+            setSelection(created.id);
+          }}
+          onCancel={() => setSelection(profiles[0]?.id ?? null)}
+        />
+      ) : selectedProfile ? (
+        <ProfileEditor
+          key={selectedProfile.id}
+          isNew={false}
+          profile={selectedProfile}
+          isActive={selectedProfile.id === activeId}
+          onSetActive={() => handleSetActive(selectedProfile.id)}
+          onDelete={() => setPendingDelete(selectedProfile)}
+          onSaved={() => setRefreshTick((n) => n + 1)}
+        />
+      ) : (
+        <EmptyDetail label="Profile not found." />
+      )}
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete profile?</DialogTitle>
+            <DialogDescription>
+              {pendingDelete ? `“${pendingDelete.name}” will be removed.` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
-function ProfileRow({
-  profile,
-  isActive,
-  onEdit,
-  onSetActive,
-  onDelete,
-}: {
-  profile: Profile;
-  isActive: boolean;
-  onEdit: () => void;
-  onSetActive: () => void;
-  onDelete: () => void;
-}) {
+function EmptyDetail({ label }: { label: string }) {
   return (
-    <div
-      className={`rounded-md border border-border bg-card ${isActive ? "ring-2 ring-primary/30" : ""}`}
-    >
-      <div className="flex items-start gap-3 p-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-body font-medium text-foreground">
-              {profile.name}
-            </span>
-            {isActive && (
-              <span className="text-tag font-medium uppercase tracking-wide text-primary">
-                Active
-              </span>
-            )}
-          </div>
-          {profile.description && (
-            <p className="text-footnote text-muted-foreground mt-1 line-clamp-2">
-              {profile.description}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {!isActive && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onSetActive}
-            >
-              Use
-            </Button>
-          )}
-          <Button variant="ghost" size="sm" onClick={onEdit}>
-            Edit
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Delete profile"
-            onClick={onDelete}
-          >
-            <TrashIcon />
-          </Button>
-        </div>
-      </div>
+    <div className="hist-detail-empty">
+      <span>{label}</span>
     </div>
   );
 }
 
 function ProfileEditor({
-  open,
-  onOpenChange,
-  profile,
   isNew,
+  profile,
+  isActive,
+  onSetActive,
+  onDelete,
   onSaved,
+  onCancel,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  isNew: boolean;
   profile: Profile | null;
-  isNew: boolean;
-  onSaved: () => void;
+  isActive: boolean;
+  onSetActive: () => void;
+  onDelete: () => void;
+  onSaved: (saved: Profile) => void;
+  onCancel?: () => void;
 }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
-        {profile && (
-          <ProfileEditorBody
-            key={profile.id || "new"}
-            profile={profile}
-            isNew={isNew}
-            onClose={() => onOpenChange(false)}
-            onSaved={onSaved}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ProfileEditorBody({
-  profile,
-  isNew,
-  onClose,
-  onSaved,
-}: {
-  profile: Profile;
-  isNew: boolean;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [name, setName] = useState(profile.name);
-  const [description, setDescription] = useState(profile.description);
-  const [stylePrompt, setStylePrompt] = useState(profile.style_prompt);
-  const [vocabulary, setVocabulary] = useState(profile.vocabulary);
+  const baseline = profile ?? {
+    name: "",
+    description: "",
+    style_prompt: "",
+    vocabulary: "",
+  };
+  const [name, setName] = useState(baseline.name);
+  const [description, setDescription] = useState(baseline.description);
+  const [stylePrompt, setStylePrompt] = useState(baseline.style_prompt);
+  const [vocabulary, setVocabulary] = useState(baseline.vocabulary);
   const [saving, setSaving] = useState(false);
+  const baselineRef = useRef(baseline);
+  useEffect(() => {
+    baselineRef.current = baseline;
+  });
+
+  const dirty =
+    name !== baseline.name ||
+    description !== baseline.description ||
+    stylePrompt !== baseline.style_prompt ||
+    vocabulary !== baseline.vocabulary;
+
+  const canSave = name.trim().length > 0 && (isNew || dirty) && !saving;
 
   const handleSave = async () => {
-    if (!name.trim()) return;
+    if (!canSave) return;
     setSaving(true);
     try {
       if (isNew) {
-        await commands.createProfile({
+        const created = await commands.createProfile({
           name: name.trim(),
           description: description.trim(),
           style_prompt: stylePrompt,
           vocabulary,
         });
-      } else {
+        onSaved(created);
+      } else if (profile) {
         await commands.updateProfile({
           id: profile.id,
           name: name.trim(),
@@ -234,8 +259,8 @@ function ProfileEditorBody({
           style_prompt: stylePrompt,
           vocabulary,
         });
+        onSaved({ ...profile, name: name.trim(), description: description.trim(), style_prompt: stylePrompt, vocabulary });
       }
-      onSaved();
     } catch (err) {
       console.error("save profile failed", err);
     } finally {
@@ -244,70 +269,92 @@ function ProfileEditorBody({
   };
 
   return (
-    <>
-      <DialogHeader>
-        <DialogTitle>{isNew ? "New profile" : `Edit ${profile.name}`}</DialogTitle>
-        <DialogDescription>
-          Profiles change how Ollama formats the cleaned output and what
-          terms Whisper biases toward.
-        </DialogDescription>
-      </DialogHeader>
-
-      <div className="flex flex-col gap-4">
-        <Field label="Name">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Quick reply"
-            autoFocus
-          />
-        </Field>
-
-        <Field
-          label="Description"
-          hint="Short label so you remember what this profile does."
-        >
-          <Input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional"
-          />
-        </Field>
-
-        <Field
-          label="Style prompt"
-          hint="Appended to the cleanup instructions. Tells Ollama how to format the output for this profile."
-        >
-          <Textarea
-            rows={5}
-            value={stylePrompt}
-            onChange={(e) => setStylePrompt(e.target.value)}
-            placeholder="STYLE: Format the output as…"
-          />
-        </Field>
-
-        <Field
-          label="Vocabulary seeds"
-          hint="Comma-separated terms biased into Whisper's transcription. Stacks with the global Vocabulary section."
-        >
-          <Textarea
-            rows={3}
-            value={vocabulary}
-            onChange={(e) => setVocabulary(e.target.value)}
-            placeholder="TypeScript, Tauri, Whisper"
-          />
-        </Field>
+    <div className="hist-detail">
+      <div className="hist-detail-header">
+        <div className="text-tag font-medium uppercase tracking-wider text-faint">
+          {isNew ? "New profile" : "Edit profile"}
+          {dirty && !isNew && (
+            <span className="ml-2 normal-case text-text-muted tracking-normal">
+              · Unsaved
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {!isNew && profile && !isActive && (
+            <Button variant="ghost" size="sm" onClick={onSetActive} className="h-8">
+              Make active
+            </Button>
+          )}
+          {isNew && onCancel && (
+            <Button variant="ghost" size="sm" onClick={onCancel} className="h-8">
+              Cancel
+            </Button>
+          )}
+          {!isNew && profile && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              title="Delete"
+              className="h-8 w-9 px-0 text-text-muted hover:text-[color:var(--color-danger)]"
+            >
+              <Trash2 size={14} aria-hidden />
+            </Button>
+          )}
+          <Button onClick={handleSave} disabled={!canSave} size="sm" className="h-8">
+            {saving ? "Saving…" : isNew ? "Create" : "Save"}
+          </Button>
+        </div>
       </div>
 
-      <DialogFooter>
-        <Button variant="ghost" onClick={onClose} disabled={saving}>
-          Cancel
-        </Button>
-        <Button onClick={handleSave} disabled={saving || !name.trim()}>
-          {saving ? "Saving…" : isNew ? "Create" : "Save"}
-        </Button>
-      </DialogFooter>
-    </>
+      <div className="hist-detail-scroll">
+        <div className="flex flex-col gap-5 max-w-[640px]">
+          <Field label="Name">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Quick reply"
+              autoFocus={isNew}
+            />
+          </Field>
+
+          <Field
+            label="Description"
+            hint="Short label so you remember what this profile does."
+          >
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional"
+            />
+          </Field>
+
+          <Field
+            label="Style prompt"
+            hint="Appended to the cleanup instructions. Tells Ollama how to format the output for this profile."
+          >
+            <Textarea
+              rows={6}
+              value={stylePrompt}
+              onChange={(e) => setStylePrompt(e.target.value)}
+              placeholder="STYLE: Format the output as…"
+            />
+          </Field>
+
+          <Field
+            label="Vocabulary seeds"
+            hint="Comma-separated terms biased into Whisper's transcription. Stacks with the global Vocabulary tab."
+          >
+            <Textarea
+              rows={4}
+              value={vocabulary}
+              onChange={(e) => setVocabulary(e.target.value)}
+              placeholder="TypeScript, Tauri, Whisper"
+            />
+          </Field>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -321,27 +368,16 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       <div>
         <div className="text-body font-medium text-foreground">{label}</div>
         {hint && (
-          <div className="text-footnote text-muted-foreground leading-snug mt-0.5">
+          <div className="text-footnote text-muted-foreground leading-snug mt-1">
             {hint}
           </div>
         )}
       </div>
       {children}
     </div>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4Z"
-      />
-    </svg>
   );
 }

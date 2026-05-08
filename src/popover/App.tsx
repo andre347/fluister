@@ -1,225 +1,253 @@
 import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, ClipboardPaste, Copy, Star } from "lucide-react";
 import {
   commands,
   type Dictation,
   type Profile,
-  type UpdateStatus,
+  type Settings,
 } from "../lib/tauri";
 import {
   useTauriEvent,
   useThemeFromSettings,
   useWindowFocus,
 } from "../lib/hooks";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
-type RecentsState =
+type LastState =
   | { kind: "loading" }
-  | { kind: "ready"; items: Dictation[] }
+  | { kind: "ready"; item: Dictation | null }
   | { kind: "error" };
 
-type UpdateState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "result"; status: UpdateStatus }
-  | { kind: "error" };
-
-type View = "menu" | "profiles";
-
-function formatRelative(ts: number): string {
-  const diff = Date.now() - ts;
-  const sec = Math.max(1, Math.floor(diff / 1000));
-  if (sec < 45) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour}h ago`;
-  const day = Math.floor(hour / 24);
-  if (day < 7) return `${day}d ago`;
-  return new Date(ts).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
+function formatClock(ts: number): string {
+  return new Date(ts).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   });
 }
 
 export function App() {
-  const [view, setView] = useState<View>("menu");
   const [focusCount, setFocusCount] = useState(0);
-  const [recents, setRecents] = useState<RecentsState>({ kind: "loading" });
-  const [version, setVersion] = useState<string | null>(null);
-  const [update, setUpdate] = useState<UpdateState>({ kind: "idle" });
-  const [flashId, setFlashId] = useState<number | null>(null);
+  const [last, setLast] = useState<LastState>({ kind: "loading" });
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<number | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  // Mute mic isn't persisted yet — Settings has no `muted` field on the Rust
+  // side. Local state keeps the toggle responsive in the popover; we'll
+  // plumb persistence when the Recording settings surface lands.
+  const [muted, setMuted] = useState(false);
+  const [copyFlash, setCopyFlash] = useState(false);
+  const [favBusy, setFavBusy] = useState(false);
 
   useThemeFromSettings(focusCount);
-  useWindowFocus(() => {
-    setFocusCount((n) => n + 1);
-    setView("menu"); // always reset to top-level on (re)show
-  });
+  useWindowFocus(() => setFocusCount((n) => n + 1));
 
-  // Recents — refresh on each show.
+  // Last dictation — refresh on each show.
   useEffect(() => {
     let cancelled = false;
     commands
       .listDictations({
-        limit: 7,
+        limit: 1,
         offset: 0,
         favoritesOnly: false,
         search: null,
       })
       .then((items) => {
-        if (!cancelled) setRecents({ kind: "ready", items });
+        if (!cancelled) setLast({ kind: "ready", item: items[0] ?? null });
       })
       .catch(() => {
-        if (!cancelled) setRecents({ kind: "error" });
+        if (!cancelled) setLast({ kind: "error" });
       });
     return () => {
       cancelled = true;
     };
   }, [focusCount]);
 
-  // Profiles + active id — refresh on each show + on profiles-changed.
-  const reloadProfiles = useCallback(() => {
+  // Profiles + settings — refresh on each show + on profile changes.
+  const reload = useCallback(() => {
     Promise.all([commands.listProfiles(), commands.getSettings()])
       .then(([list, s]) => {
         setProfiles(list);
-        setActiveProfileId(s.active_profile_id);
+        setSettings(s);
       })
-      .catch((err) => console.error("profiles load failed", err));
+      .catch((err) => console.error("popover load failed", err));
   }, []);
-  useEffect(() => {
-    reloadProfiles();
-  }, [focusCount, reloadProfiles]);
+  useEffect(() => reload(), [focusCount, reload]);
+  useTauriEvent<unknown>("profiles-changed", () => reload());
 
-  useTauriEvent<unknown>("profiles-changed", () => reloadProfiles());
+  const lastItem = last.kind === "ready" ? last.item : null;
+  const hasItem = lastItem !== null;
 
-  // App version: load once.
-  useEffect(() => {
+  const handlePaste = useCallback(() => {
+    if (!lastItem) return;
     commands
-      .appVersion()
-      .then((v) => setVersion(v))
-      .catch(() => setVersion(null));
+      .pasteDictation(lastItem.id)
+      .then(() => commands.closePopover())
+      .catch((err) => console.error("paste_dictation failed", err));
+  }, [lastItem]);
+
+  const handleCopy = useCallback(() => {
+    if (!lastItem) return;
+    commands
+      .copyDictation(lastItem.id)
+      .then(() => {
+        setCopyFlash(true);
+        setTimeout(() => setCopyFlash(false), 700);
+      })
+      .catch((err) => console.error("copy_dictation failed", err));
+  }, [lastItem]);
+
+  const handleToggleFavorite = useCallback(() => {
+    if (!lastItem || favBusy) return;
+    setFavBusy(true);
+    commands
+      .toggleFavorite(lastItem.id)
+      .then((favorite) => {
+        setLast((prev) =>
+          prev.kind === "ready" && prev.item
+            ? { kind: "ready", item: { ...prev.item, favorite } }
+            : prev,
+        );
+      })
+      .catch((err) => console.error("toggle_favorite failed", err))
+      .finally(() => setFavBusy(false));
+  }, [lastItem, favBusy]);
+
+  const handleSelectProfile = useCallback((id: number) => {
+    commands
+      .setActiveProfile(id)
+      .then(() =>
+        setSettings((s) => (s ? { ...s, active_profile_id: id } : s)),
+      )
+      .catch((err) => console.error("set_active_profile failed", err));
   }, []);
 
-  // Esc — close popover from menu, back to menu from profiles.
+  const handleToggleCleanup = useCallback(
+    (next: boolean) => {
+      if (!settings) return;
+      const updated = { ...settings, cleanup_enabled: next };
+      setSettings(updated);
+      commands.updateSettings(updated).catch((err) => {
+        console.error("update_settings(cleanup) failed", err);
+        setSettings(settings); // rollback
+      });
+    },
+    [settings],
+  );
+
+  // Esc closes; ⌘V pastes; ⌘C copies. Only fire shortcuts when an item exists.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (view === "profiles") {
-        e.preventDefault();
-        setView("menu");
-      } else {
+      if (e.key === "Escape") {
         commands.closePopover().catch(() => {});
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        if (e.key === "v" && hasItem) {
+          e.preventDefault();
+          handlePaste();
+        } else if (e.key === "c" && hasItem) {
+          e.preventDefault();
+          handleCopy();
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [view]);
+  }, [hasItem, handlePaste, handleCopy]);
 
-  const handleCopy = useCallback((id: number) => {
-    commands
-      .copyDictation(id)
-      .then(() => {
-        setFlashId(id);
-        setTimeout(
-          () => setFlashId((current) => (current === id ? null : current)),
-          600,
-        );
-      })
-      .catch((err) => console.error("copy_dictation failed", err));
-  }, []);
-
-  const handleCheckUpdates = useCallback(() => {
-    setUpdate({ kind: "checking" });
-    commands
-      .checkForUpdates()
-      .then((status) => setUpdate({ kind: "result", status }))
-      .catch(() => setUpdate({ kind: "error" }));
-  }, []);
-
-  const handleSelectProfile = useCallback(async (id: number) => {
-    try {
-      await commands.setActiveProfile(id);
-      setActiveProfileId(id);
-    } catch (err) {
-      console.error("set_active_profile failed", err);
-    }
-    setView("menu");
-  }, []);
-
-  const activeProfileName =
-    profiles.find((p) => p.id === activeProfileId)?.name ??
-    profiles.find((p) => p.name.toLowerCase() === "default")?.name ??
-    "Default";
+  const activeProfile =
+    profiles.find((p) => p.id === settings?.active_profile_id) ??
+    profiles.find((p) => p.name.toLowerCase() === "default") ??
+    null;
+  const activeProfileName = activeProfile?.name ?? "Default";
 
   return (
     <div className="popover">
-      {view === "menu" ? (
-        <MenuView
-          recents={recents}
-          flashId={flashId}
-          onCopy={handleCopy}
-          activeProfileName={activeProfileName}
-          onOpenProfiles={() => setView("profiles")}
-          version={version}
-          update={update}
-          onCheckUpdates={handleCheckUpdates}
-        />
-      ) : (
-        <ProfilesView
-          profiles={profiles}
-          activeProfileId={activeProfileId}
-          onBack={() => setView("menu")}
-          onSelect={handleSelectProfile}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Views ──────────────────────────────────────────────────────────────────
-
-function MenuView({
-  recents,
-  flashId,
-  onCopy,
-  activeProfileName,
-  onOpenProfiles,
-  version,
-  update,
-  onCheckUpdates,
-}: {
-  recents: RecentsState;
-  flashId: number | null;
-  onCopy: (id: number) => void;
-  activeProfileName: string;
-  onOpenProfiles: () => void;
-  version: string | null;
-  update: UpdateState;
-  onCheckUpdates: () => void;
-}) {
-  return (
-    <>
-      <div className="menu-section">
-        <div className="menu-caption">Recent</div>
-        <div className="menu-list scrollable">
-          <RecentsSection state={recents} flashId={flashId} onCopy={onCopy} />
+      {/* Last dictation card + actions */}
+      <div className="px-4 pt-3.5 pb-3 flex flex-col gap-2">
+        <div className="flex items-center justify-between text-tag font-medium uppercase tracking-wider text-faint">
+          <span>Last dictation</span>
+          {lastItem && (
+            <span className="font-mono normal-case tracking-normal">
+              {formatClock(lastItem.created_at)}
+            </span>
+          )}
         </div>
+        <LastDictationCard state={last} />
+        <ActionRow
+          disabled={!hasItem}
+          favorite={lastItem?.favorite ?? false}
+          copyFlash={copyFlash}
+          onPaste={handlePaste}
+          onCopy={handleCopy}
+          onFavorite={handleToggleFavorite}
+        />
       </div>
 
       <div className="menu-separator" />
 
-      <div className="menu-section">
-        <button
-          type="button"
-          className="menu-item flex items-center justify-between gap-2"
-          onClick={onOpenProfiles}
-        >
+      {/* Profile + toggles */}
+      <div className="px-4 py-2.5 flex flex-col gap-1">
+        <div className="flex items-center justify-between h-8 text-item">
           <span>Profile</span>
-          <span className="flex items-center gap-1.5 text-text-muted">
-            <span className="truncate max-w-[160px]">{activeProfileName}</span>
-            <ChevronRightIcon />
-          </span>
-        </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="inline-flex items-center gap-1 rounded-md px-2 h-6 text-caption font-medium bg-[color-mix(in_oklch,var(--color-brand)_22%,transparent)] text-[color-mix(in_oklch,var(--color-brand-strong)_92%,black)] dark:text-[color-mix(in_oklch,var(--color-brand)_92%,white)] hover:bg-[color-mix(in_oklch,var(--color-brand)_30%,transparent)] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <span className="truncate max-w-[140px]">
+                {activeProfileName}
+              </span>
+              <ChevronDown size={11} aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={6}
+              className="min-w-[180px]"
+            >
+              {profiles.length === 0 ? (
+                <div className="px-2 py-1.5 text-caption text-text-muted">
+                  No profiles
+                </div>
+              ) : (
+                profiles.map((p) => (
+                  <DropdownMenuItem
+                    key={p.id}
+                    onClick={() => handleSelectProfile(p.id)}
+                    className="justify-between"
+                  >
+                    <span className="truncate">{p.name}</span>
+                    {p.id === activeProfile?.id && (
+                      <span className="size-1.5 rounded-full bg-primary" />
+                    )}
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => commands.openHistory().catch(() => {})}
+              >
+                Manage profiles…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <ToggleRow
+          label="AI cleanup"
+          checked={settings?.cleanup_enabled ?? false}
+          disabled={!settings}
+          onChange={handleToggleCleanup}
+        />
+        <ToggleRow label="Mute mic" checked={muted} onChange={setMuted} />
       </div>
 
       <div className="menu-separator" />
@@ -230,189 +258,164 @@ function MenuView({
           className="menu-item"
           onClick={() => commands.openHistory().catch(() => {})}
         >
-          Open History
+          Open History…
         </button>
         <button
           type="button"
           className="menu-item"
           onClick={() => commands.openSettingsFromPopover().catch(() => {})}
         >
-          Settings
+          Settings…
         </button>
       </div>
 
-      <div className="menu-separator" />
-
-      <div className="menu-section">
-        <div className="menu-item disabled">
-          {version ? `Fluister v${version}` : "Fluister"}
-        </div>
-        <div
-          className={
-            update.kind === "checking"
-              ? "menu-item disabled checking"
-              : "menu-item disabled"
-          }
-        >
-          {updateStatusLabel(update)}
-        </div>
-        <button type="button" className="menu-item" onClick={onCheckUpdates}>
-          Check for updates
-        </button>
-      </div>
+      <div className="flex-1" />
 
       <div className="menu-separator" />
 
       <div className="menu-section">
         <button
           type="button"
-          className="menu-item"
+          className="menu-item flex items-center justify-between"
           onClick={() => commands.quitApp().catch(() => {})}
         >
-          Quit Fluister
+          <span>Quit Fluister</span>
+          <kbd className="font-mono text-tag text-faint">⌘Q</kbd>
         </button>
       </div>
-    </>
+    </div>
   );
 }
 
-function ProfilesView({
-  profiles,
-  activeProfileId,
-  onBack,
-  onSelect,
-}: {
-  profiles: Profile[];
-  activeProfileId: number | null;
-  onBack: () => void;
-  onSelect: (id: number) => void;
-}) {
-  return (
-    <>
-      <div className="menu-section">
-        <button
-          type="button"
-          className="menu-item flex items-center gap-2"
-          onClick={onBack}
-        >
-          <ChevronLeftIcon />
-          <span>Profiles</span>
-        </button>
-      </div>
+// ─── Pieces ─────────────────────────────────────────────────────────────────
 
-      <div className="menu-separator" />
-
-      <div className="menu-section">
-        <div className="menu-list scrollable">
-          {profiles.length === 0 ? (
-            <div className="menu-empty">No profiles</div>
-          ) : (
-            profiles.map((p) => {
-              const isActive = p.id === activeProfileId;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="menu-item flex items-center justify-between gap-2"
-                  onClick={() => onSelect(p.id)}
-                >
-                  <span className="truncate">{p.name}</span>
-                  {isActive && (
-                    <span className="text-text-muted shrink-0">
-                      <CheckIcon />
-                    </span>
-                  )}
-                </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-function updateStatusLabel(state: UpdateState): string {
-  switch (state.kind) {
-    case "idle":
-      return "Latest version";
-    case "checking":
-      return "Checking…";
-    case "result":
-      return state.status.up_to_date
-        ? "Latest version"
-        : `Update available: v${state.status.latest_version}`;
-    case "error":
-      return "Couldn't check";
-  }
-}
-
-function RecentsSection({
-  state,
-  flashId,
-  onCopy,
-}: {
-  state: RecentsState;
-  flashId: number | null;
-  onCopy: (id: number) => void;
-}) {
+function LastDictationCard({ state }: { state: LastState }) {
   if (state.kind === "loading") {
-    return <div className="menu-empty">Loading…</div>;
+    return (
+      <CardShell>
+        <span className="text-text-muted">Loading…</span>
+      </CardShell>
+    );
   }
   if (state.kind === "error") {
-    return <div className="menu-empty">Couldn&apos;t load history</div>;
+    return (
+      <CardShell>
+        <span className="text-text-muted">Couldn’t load history</span>
+      </CardShell>
+    );
   }
-  if (state.items.length === 0) {
-    return <div className="menu-empty">No dictations yet</div>;
+  if (!state.item) {
+    return (
+      <CardShell>
+        <span className="text-text-muted">
+          No dictations yet — hold{" "}
+          <kbd className="font-mono text-tag bg-[color:var(--color-elev)] px-1 py-0.5 rounded">
+            ⌥
+          </kbd>{" "}
+          to start.
+        </span>
+      </CardShell>
+    );
   }
   return (
-    <>
-      {state.items.map((d) => (
-        <button
-          key={d.id}
-          type="button"
-          className={
-            flashId === d.id ? "menu-item recent flash" : "menu-item recent"
-          }
-          onClick={() => onCopy(d.id)}
-        >
-          <span className="text">{d.cleaned_text}</span>
-          <span className="meta">{formatRelative(d.created_at)}</span>
-        </button>
-      ))}
-    </>
+    <CardShell>
+      <span className="line-clamp-3 leading-snug">
+        {state.item.cleaned_text}
+      </span>
+    </CardShell>
   );
 }
 
-function ChevronRightIcon() {
+function CardShell({ children }: { children: React.ReactNode }) {
   return (
-    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M5.5 3 11 8.5 5.5 14l-1-1 4.5-4.5L4.5 4l1-1Z"
-      />
-    </svg>
+    <div className="rounded-md bg-[color-mix(in_oklch,white_42%,transparent)] dark:bg-[color-mix(in_oklch,black_24%,transparent)] px-3 py-2.5 text-body min-h-[64px] flex items-start leading-snug">
+      {children}
+    </div>
   );
 }
 
-function ChevronLeftIcon() {
+function ActionRow({
+  disabled,
+  favorite,
+  copyFlash,
+  onPaste,
+  onCopy,
+  onFavorite,
+}: {
+  disabled: boolean;
+  favorite: boolean;
+  copyFlash: boolean;
+  onPaste: () => void;
+  onCopy: () => void;
+  onFavorite: () => void;
+}) {
   return (
-    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M10.5 3 5 8.5 10.5 14l1-1L7 8.5 11.5 4l-1-1Z"
-      />
-    </svg>
+    <div className="flex items-center gap-2">
+      <Button
+        variant="default"
+        size="sm"
+        disabled={disabled}
+        onClick={onPaste}
+        className="flex-1 h-8 text-caption gap-1.5"
+      >
+        <ClipboardPaste size={13} aria-hidden />
+        <span>Paste</span>
+        <kbd className="font-mono text-[10px] opacity-80 ml-0.5">⌘V</kbd>
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={disabled}
+        onClick={onCopy}
+        title="Copy (⌘C)"
+        className={cn(
+          "h-8 w-10 px-0",
+          copyFlash && "text-[color:var(--color-success)]",
+        )}
+      >
+        <Copy size={13} aria-hidden />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={disabled}
+        onClick={onFavorite}
+        title={favorite ? "Unfavorite" : "Favorite"}
+        className="h-8 w-10 px-0"
+      >
+        <Star
+          size={14}
+          aria-hidden
+          className={cn(
+            favorite &&
+              "fill-[color:var(--color-accent-yellow)] text-[color:var(--color-accent-yellow)]",
+          )}
+        />
+      </Button>
+    </div>
   );
 }
 
-function CheckIcon() {
+function ToggleRow({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
+}) {
   return (
-    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M6 11.4 2.6 8 1.5 9.1 6 13.6 14.5 5.1 13.4 4 6 11.4Z"
-      />
-    </svg>
+    <label
+      className={cn(
+        "flex items-center justify-between h-8 text-item cursor-default",
+        disabled && "opacity-50",
+      )}
+    >
+      <span>{label}</span>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
+    </label>
   );
 }

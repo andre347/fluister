@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
@@ -30,6 +31,16 @@ env_logger = "0.11"
 dirs = "5"
 rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1"
+
+# Vault file format — markdown profiles/vocab live on disk in the user's
+# Fluister vault. serde_yaml parses the YAML frontmatter; ulid produces
+# stable identifiers that survive cache rebuilds and multi-machine sync.
+serde_yaml = "0.9"
+ulid = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# File watcher for the vault — picks up edits made externally (Obsidian, BBEdit,
+# `git pull` on a synced vault). FSEvents on macOS via the recommended backend.
+notify = "6"
 
 # whisper-rs builds whisper.cpp through cmake + clang.
 # Metal is enabled on macOS for Apple Silicon GPU acceleration.

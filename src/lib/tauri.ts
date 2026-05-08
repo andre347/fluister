@@ -17,6 +17,10 @@ export interface Dictation {
   raw_text: string;
   duration_ms: number;
   favorite: boolean;
+  /** ID of the profile that was active when this dictation was recorded.
+   *  Null on rows pre-dating profile_id (migration v3) or if no profile
+   *  resolved at recording time. */
+  profile_id: number | null;
 }
 
 export interface Settings {
@@ -29,6 +33,9 @@ export interface Settings {
   language: string;
   onboarding_complete: boolean;
   active_profile_id: number | null;
+  /** Filesystem path to the user's Fluister vault, or null for SQLite-only.
+   *  See Settings → Storage to set/change this. */
+  vault_path: string | null;
 }
 
 export interface Profile {
@@ -101,6 +108,14 @@ export interface OllamaModel {
   parameter_size: string;
 }
 
+export interface VaultStatus {
+  /** Absolute path of the configured vault, or null for SQLite-only mode. */
+  path: string | null;
+  exists: boolean;
+  profile_count: number;
+  vocab_count: number;
+}
+
 export interface ListDictationsArgs {
   limit?: number;
   offset?: number;
@@ -129,6 +144,7 @@ export const commands = {
 
   // Onboarding
   onboardingStatus: () => invoke<OnboardingStatus>("onboarding_status"),
+  showOnboardingWindow: () => invoke<void>("show_onboarding_window"),
   requestMicrophoneAccess: () =>
     invoke<MicStatus>("request_microphone_access"),
   openPrivacyPanel: (panel: PrivacyPanel) =>
@@ -189,4 +205,12 @@ export const commands = {
     ),
   deleteVocabularyEntry: (id: number) =>
     invoke<void>("delete_vocabulary_entry", { id }),
+
+  // Vault
+  vaultStatus: () => invoke<VaultStatus>("vault_status"),
+  setVaultPath: (path: string) =>
+    invoke<VaultStatus>("set_vault_path", { path }),
+  clearVaultPath: () => invoke<VaultStatus>("clear_vault_path"),
+  openVaultInFinder: () => invoke<void>("open_vault_in_finder"),
+  suggestedVaultPath: () => invoke<string>("suggested_vault_path"),
 };

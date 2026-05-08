@@ -13,6 +13,11 @@ pub struct Dictation {
     pub cleaned_text: String,
     pub duration_ms: i64,
     pub favorite: bool,
+    /// Profile that was active when the recording was made. Nullable so
+    /// pre-v3 rows + recordings made when no profile resolves both work.
+    /// The frontend resolves the i64 to a display name via the profiles
+    /// list — a dangling id (profile deleted later) just shows no chip.
+    pub profile_id: Option<i64>,
 }
 
 /// A user-customisable cleanup profile. The `style_prompt` is appended to
@@ -28,6 +33,10 @@ pub struct Profile {
     pub style_prompt: String,
     pub vocabulary: String,
     pub created_at: i64,
+    /// Stable identity for vault sync. Always populated post-migration v2.
+    /// Skipped from JSON because the frontend keys off `id` only.
+    #[serde(skip)]
+    pub ulid: String,
 }
 
 /// Canonical term + spoken/transcribed aliases. Aliases are matched
@@ -39,6 +48,10 @@ pub struct VocabularyEntry {
     pub term: String,
     pub aliases: Vec<String>,
     pub created_at: i64,
+    /// Stable identity for vault sync. Always populated post-migration v2.
+    /// Skipped from JSON because the frontend keys off `id` only.
+    #[serde(skip)]
+    pub ulid: String,
 }
 
 /// Thin wrapper around a single SQLite connection. The connection is held
@@ -89,13 +102,19 @@ impl Db {
 
     // ─── Dictations ─────────────────────────────────────────────────────────
 
-    pub fn insert(&self, raw: &str, cleaned: &str, duration_ms: i64) -> Result<i64> {
+    pub fn insert(
+        &self,
+        raw: &str,
+        cleaned: &str,
+        duration_ms: i64,
+        profile_id: Option<i64>,
+    ) -> Result<i64> {
         let now = now_ms();
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO dictations (created_at, raw_text, cleaned_text, duration_ms)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![now, raw, cleaned, duration_ms],
+            "INSERT INTO dictations (created_at, raw_text, cleaned_text, duration_ms, profile_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![now, raw, cleaned, duration_ms, profile_id],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -118,7 +137,7 @@ impl Db {
         match (favorites_only, pattern) {
             (true, Some(p)) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      WHERE favorite = 1 AND (cleaned_text LIKE ?1 OR raw_text LIKE ?1)
                      ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
@@ -129,7 +148,7 @@ impl Db {
             }
             (true, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      WHERE favorite = 1
                      ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
@@ -140,7 +159,7 @@ impl Db {
             }
             (false, Some(p)) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      WHERE cleaned_text LIKE ?1 OR raw_text LIKE ?1
                      ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
@@ -151,7 +170,7 @@ impl Db {
             }
             (false, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+                    "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
                      FROM dictations
                      ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
                 )?;
@@ -186,7 +205,7 @@ impl Db {
     pub fn get(&self, id: i64) -> Result<Option<Dictation>> {
         let conn = self.conn.lock();
         match conn.query_row(
-            "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite
+            "SELECT id, created_at, raw_text, cleaned_text, duration_ms, favorite, profile_id
              FROM dictations WHERE id = ?1",
             params![id],
             row_to_dictation,
@@ -202,7 +221,7 @@ impl Db {
     pub fn list_profiles(&self) -> Result<Vec<Profile>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, style_prompt, vocabulary, created_at
+            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid
              FROM profiles ORDER BY id",
         )?;
         let rows = stmt.query_map([], row_to_profile)?;
@@ -216,7 +235,7 @@ impl Db {
     pub fn get_profile(&self, id: i64) -> Result<Option<Profile>> {
         let conn = self.conn.lock();
         match conn.query_row(
-            "SELECT id, name, description, style_prompt, vocabulary, created_at
+            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid
              FROM profiles WHERE id = ?1",
             params![id],
             row_to_profile,
@@ -234,12 +253,33 @@ impl Db {
         style_prompt: &str,
         vocabulary: &str,
     ) -> Result<Profile> {
-        let now = now_ms();
+        self.create_profile_with_ulid(
+            &ulid::Ulid::new().to_string(),
+            name,
+            description,
+            style_prompt,
+            vocabulary,
+            now_ms(),
+        )
+    }
+
+    /// Insert a profile with a caller-supplied ULID + created_at — used by
+    /// the vault → SQLite cache reconciler so that the cache mirrors the
+    /// vault's stable identity.
+    pub fn create_profile_with_ulid(
+        &self,
+        ulid: &str,
+        name: &str,
+        description: &str,
+        style_prompt: &str,
+        vocabulary: &str,
+        created_at: i64,
+    ) -> Result<Profile> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO profiles (name, description, style_prompt, vocabulary, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![name, description, style_prompt, vocabulary, now],
+            "INSERT INTO profiles (name, description, style_prompt, vocabulary, created_at, ulid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![name, description, style_prompt, vocabulary, created_at, ulid],
         )?;
         let id = conn.last_insert_rowid();
         Ok(Profile {
@@ -248,7 +288,8 @@ impl Db {
             description: description.to_string(),
             style_prompt: style_prompt.to_string(),
             vocabulary: vocabulary.to_string(),
-            created_at: now,
+            created_at,
+            ulid: ulid.to_string(),
         })
     }
 
@@ -276,12 +317,50 @@ impl Db {
         Ok(())
     }
 
+    pub fn find_profile_by_ulid(&self, ulid: &str) -> Result<Option<Profile>> {
+        let conn = self.conn.lock();
+        match conn.query_row(
+            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid
+             FROM profiles WHERE ulid = ?1",
+            params![ulid],
+            row_to_profile,
+        ) {
+            Ok(p) => Ok(Some(p)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn update_profile_by_ulid(
+        &self,
+        ulid: &str,
+        name: &str,
+        description: &str,
+        style_prompt: &str,
+        vocabulary: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE profiles
+             SET name = ?2, description = ?3, style_prompt = ?4, vocabulary = ?5
+             WHERE ulid = ?1",
+            params![ulid, name, description, style_prompt, vocabulary],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_profile_by_ulid(&self, ulid: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM profiles WHERE ulid = ?1", params![ulid])?;
+        Ok(())
+    }
+
     // ─── Vocabulary entries ─────────────────────────────────────────────────
 
     pub fn list_vocabulary(&self) -> Result<Vec<VocabularyEntry>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, term, aliases, created_at
+            "SELECT id, term, aliases, created_at, ulid
              FROM vocabulary_entries ORDER BY term COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], row_to_vocab)?;
@@ -297,19 +376,34 @@ impl Db {
         term: &str,
         aliases: &[String],
     ) -> Result<VocabularyEntry> {
-        let now = now_ms();
+        self.create_vocabulary_entry_with_ulid(
+            &ulid::Ulid::new().to_string(),
+            term,
+            aliases,
+            now_ms(),
+        )
+    }
+
+    pub fn create_vocabulary_entry_with_ulid(
+        &self,
+        ulid: &str,
+        term: &str,
+        aliases: &[String],
+        created_at: i64,
+    ) -> Result<VocabularyEntry> {
         let aliases_json = serde_json::to_string(aliases)?;
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO vocabulary_entries (term, aliases, created_at)
-             VALUES (?1, ?2, ?3)",
-            params![term, aliases_json, now],
+            "INSERT INTO vocabulary_entries (term, aliases, created_at, ulid)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![term, aliases_json, created_at, ulid],
         )?;
         Ok(VocabularyEntry {
             id: conn.last_insert_rowid(),
             term: term.to_string(),
             aliases: aliases.to_vec(),
-            created_at: now,
+            created_at,
+            ulid: ulid.to_string(),
         })
     }
 
@@ -336,6 +430,44 @@ impl Db {
         )?;
         Ok(())
     }
+
+    pub fn find_vocab_by_ulid(&self, ulid: &str) -> Result<Option<VocabularyEntry>> {
+        let conn = self.conn.lock();
+        match conn.query_row(
+            "SELECT id, term, aliases, created_at, ulid
+             FROM vocabulary_entries WHERE ulid = ?1",
+            params![ulid],
+            row_to_vocab,
+        ) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn update_vocab_by_ulid(
+        &self,
+        ulid: &str,
+        term: &str,
+        aliases: &[String],
+    ) -> Result<()> {
+        let aliases_json = serde_json::to_string(aliases)?;
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE vocabulary_entries SET term = ?2, aliases = ?3 WHERE ulid = ?1",
+            params![ulid, term, aliases_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_vocab_by_ulid(&self, ulid: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "DELETE FROM vocabulary_entries WHERE ulid = ?1",
+            params![ulid],
+        )?;
+        Ok(())
+    }
 }
 
 // ─── Row mappers ────────────────────────────────────────────────────────────
@@ -348,6 +480,7 @@ fn row_to_dictation(row: &rusqlite::Row) -> rusqlite::Result<Dictation> {
         cleaned_text: row.get(3)?,
         duration_ms: row.get(4)?,
         favorite: row.get::<_, i64>(5)? != 0,
+        profile_id: row.get(6)?,
     })
 }
 
@@ -359,6 +492,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         style_prompt: row.get(3)?,
         vocabulary: row.get(4)?,
         created_at: row.get(5)?,
+        ulid: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
     })
 }
 
@@ -370,6 +504,7 @@ fn row_to_vocab(row: &rusqlite::Row) -> rusqlite::Result<VocabularyEntry> {
         term: row.get(1)?,
         aliases,
         created_at: row.get(3)?,
+        ulid: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
     })
 }
 
@@ -389,7 +524,8 @@ CREATE TABLE IF NOT EXISTS dictations (
     raw_text TEXT NOT NULL,
     cleaned_text TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
-    favorite INTEGER NOT NULL DEFAULT 0
+    favorite INTEGER NOT NULL DEFAULT 0,
+    profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dictations_created_at ON dictations(created_at DESC);
 
@@ -404,14 +540,16 @@ CREATE TABLE IF NOT EXISTS profiles (
     description TEXT NOT NULL DEFAULT '',
     style_prompt TEXT NOT NULL DEFAULT '',
     vocabulary TEXT NOT NULL DEFAULT '',
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    ulid TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vocabulary_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     term TEXT NOT NULL UNIQUE,
     aliases TEXT NOT NULL DEFAULT '[]',
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    ulid TEXT
 );
 ";
 
@@ -463,6 +601,66 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch("PRAGMA user_version = 1")?;
     }
 
+    if version < 2 {
+        // Add ulid columns + backfill existing rows. Column may already
+        // exist if the table was newly created from SCHEMA above (which
+        // includes the column post-v2); ALTER errors are ignored.
+        let _ = conn.execute_batch(
+            "ALTER TABLE profiles ADD COLUMN ulid TEXT;
+             ALTER TABLE vocabulary_entries ADD COLUMN ulid TEXT;",
+        );
+        backfill_ulids(conn)?;
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_ulid ON profiles(ulid) WHERE ulid IS NOT NULL;
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_ulid ON vocabulary_entries(ulid) WHERE ulid IS NOT NULL;
+             PRAGMA user_version = 2;",
+        )?;
+    }
+
+    if version < 3 {
+        // Tag dictations with the profile that produced them. Pre-v3 rows
+        // stay NULL — the UI just doesn't show a chip for them. The ALTER
+        // is wrapped because the column already exists on fresh installs
+        // (SCHEMA above includes it post-v3).
+        let _ = conn.execute_batch(
+            "ALTER TABLE dictations ADD COLUMN profile_id INTEGER \
+             REFERENCES profiles(id) ON DELETE SET NULL;",
+        );
+        conn.execute_batch("PRAGMA user_version = 3;")?;
+    }
+
+    Ok(())
+}
+
+/// Stamp a ULID on every profile + vocabulary row that's missing one.
+/// Idempotent — re-running is a no-op once all rows have ULIDs.
+fn backfill_ulids(conn: &Connection) -> Result<()> {
+    {
+        let mut stmt =
+            conn.prepare("SELECT id FROM profiles WHERE ulid IS NULL OR ulid = ''")?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for id in ids {
+            conn.execute(
+                "UPDATE profiles SET ulid = ?1 WHERE id = ?2",
+                params![ulid::Ulid::new().to_string(), id],
+            )?;
+        }
+    }
+    {
+        let mut stmt = conn
+            .prepare("SELECT id FROM vocabulary_entries WHERE ulid IS NULL OR ulid = ''")?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for id in ids {
+            conn.execute(
+                "UPDATE vocabulary_entries SET ulid = ?1 WHERE id = ?2",
+                params![ulid::Ulid::new().to_string(), id],
+            )?;
+        }
+    }
     Ok(())
 }
 

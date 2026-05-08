@@ -16,7 +16,11 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 struct ChatResponse {
     message: ChatMessage,
 
+    // Parsed from Ollama's response shape but unused — we drive control
+    // flow off `done_reason`. Kept so the response struct mirrors the
+    // wire format and future readers don't go hunting for it.
     #[serde(default)]
+    #[allow(dead_code)]
     done: bool,
 
     #[serde(default)]
