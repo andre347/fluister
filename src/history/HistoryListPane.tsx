@@ -1,19 +1,23 @@
 import { useMemo, useRef, useEffect } from "react";
-import type { Dictation } from "../lib/tauri";
-import { Input } from "../components/ui/input";
+import type { Dictation, Profile } from "../lib/tauri";
+import { Segmented } from "../components/atoms";
+import { IconStar } from "../components/icons";
+import { profileDotColorById } from "../lib/profiles";
 import { cn } from "../lib/utils";
+
+export type ListMode = "all" | "clean" | "raw";
 
 type Props = {
   dictations: Dictation[];
   selectedId: number | null;
-  search: string;
-  onSearchChange: (value: string) => void;
   onSelect: (id: number) => void;
-  searchInputRef: React.RefObject<HTMLInputElement | null>;
   isLoading: boolean;
-  /** Profile id → display name. Rows whose profile_id is null OR whose
-   *  id isn't in the map render no chip. */
+  profiles: Profile[];
+  /** Profile id → display name. Used by the meta line under each row. */
   profileNames: Map<number, string>;
+  totalLabel: string;
+  mode: ListMode;
+  onModeChange: (next: ListMode) => void;
 };
 
 interface DateGroup {
@@ -56,19 +60,32 @@ function formatClock(ts: number): string {
   });
 }
 
+function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+const MODE_OPTIONS = [
+  { value: "all" as const, label: "All" },
+  { value: "clean" as const, label: "Cleaned" },
+  { value: "raw" as const, label: "Raw" },
+];
+
 export function HistoryListPane({
   dictations,
   selectedId,
-  search,
-  onSearchChange,
   onSelect,
-  searchInputRef,
   isLoading,
+  profiles,
   profileNames,
+  totalLabel,
+  mode,
+  onModeChange,
 }: Props) {
   const groups = useMemo(() => groupByDate(dictations), [dictations]);
 
-  // Scroll selected row into view when selection changes.
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (selectedId == null || !listRef.current) return;
@@ -79,43 +96,48 @@ export function HistoryListPane({
   }, [selectedId]);
 
   return (
-    <div className="hist-list-pane">
-      <div className="hist-list-search">
-        <SearchIcon />
-        <Input
-          ref={searchInputRef}
-          type="search"
-          placeholder="Search history"
-          autoComplete="off"
-          spellCheck={false}
-          aria-label="Search dictations"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="h-7 pl-6 text-footnote bg-transparent border-0 shadow-none focus-visible:ring-0"
+    <div
+      className="flex flex-col flex-shrink-0 border-r-[0.5px] border-hair overflow-hidden"
+      style={{ width: 360, background: "var(--color-list-bg)" }}
+    >
+      <div className="sticky top-0 z-[1] flex items-center justify-between gap-3 px-4 py-2.5 border-b-[0.5px] border-hair bg-[rgba(252,252,250,0.85)] backdrop-blur-xl">
+        <span className="text-[12px] text-ink-2">{totalLabel}</span>
+        <Segmented
+          options={MODE_OPTIONS}
+          value={mode}
+          onChange={onModeChange}
+          size="sm"
         />
       </div>
-      <div ref={listRef} className="hist-list-scroll scrollable">
+
+      <div ref={listRef} className="flex-1 overflow-y-auto scrollable">
         {isLoading ? (
-          <div className="hist-list-empty">Loading…</div>
+          <div className="px-4 py-8 text-center text-[12px] text-ink-3">
+            Loading…
+          </div>
         ) : dictations.length === 0 ? (
-          <div className="hist-list-empty">
-            {search ? "No matches" : "No dictations yet"}
+          <div className="px-4 py-8 text-center text-[12px] text-ink-3">
+            No matches
           </div>
         ) : (
           groups.map((group) => (
             <div key={group.label}>
-              <div className="hist-list-group">{group.label}</div>
+              <div className="font-sf text-[11px] font-semibold uppercase tracking-[0.4px] text-ink-3 px-4 pt-3 pb-1">
+                {group.label}
+              </div>
               {group.items.map((d) => (
                 <ListRow
                   key={d.id}
                   dictation={d}
                   isSelected={d.id === selectedId}
                   onSelect={() => onSelect(d.id)}
+                  mode={mode}
                   profileName={
                     d.profile_id != null
                       ? profileNames.get(d.profile_id) ?? null
                       : null
                   }
+                  profileDotVar={profileDotColorById(d.profile_id, profiles)}
                 />
               ))}
             </div>
@@ -126,17 +148,24 @@ export function HistoryListPane({
   );
 }
 
+interface RowProps {
+  dictation: Dictation;
+  isSelected: boolean;
+  onSelect: () => void;
+  mode: ListMode;
+  profileName: string | null;
+  profileDotVar: string;
+}
+
 function ListRow({
   dictation,
   isSelected,
   onSelect,
+  mode,
   profileName,
-}: {
-  dictation: Dictation;
-  isSelected: boolean;
-  onSelect: () => void;
-  profileName: string | null;
-}) {
+  profileDotVar,
+}: RowProps) {
+  const preview = mode === "raw" ? dictation.raw_text : dictation.cleaned_text;
   return (
     <button
       type="button"
@@ -144,45 +173,44 @@ function ListRow({
       onClick={onSelect}
       aria-pressed={isSelected}
       className={cn(
-        "hist-list-row",
-        isSelected && "hist-list-row-selected",
+        "w-full flex gap-2.5 px-4 py-2.5 border-b-[0.5px] border-hair text-left cursor-pointer",
+        isSelected ? "bg-selection" : "hover:bg-fl-hover",
       )}
     >
-      <div className="flex items-center justify-between gap-2 mb-0.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {profileName && (
-            <span className="hist-profile-chip" title={profileName}>
-              {profileName}
-            </span>
-          )}
-          <span className="font-mono text-tag opacity-80">
-            {formatClock(dictation.created_at)}
-          </span>
-        </div>
-        {dictation.favorite && (
-          <span className="text-[color:var(--color-accent-yellow)] text-tag" aria-hidden>
-            ★
-          </span>
-        )}
-      </div>
-      <div className="hist-list-row-text">{dictation.cleaned_text}</div>
-    </button>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg
-      className="absolute left-1.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none"
-      viewBox="0 0 16 16"
-      width="11"
-      height="11"
-      aria-hidden="true"
-    >
-      <path
-        fill="currentColor"
-        d="M11.74 10.32a6 6 0 1 0-1.42 1.42l3.47 3.47a1 1 0 0 0 1.42-1.42l-3.47-3.47ZM3 7a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z"
+      <span
+        className="w-2 h-2 rounded-full mt-[7px] flex-shrink-0"
+        style={{ background: profileDotVar }}
+        aria-hidden
       />
-    </svg>
+      <div className="flex-1 min-w-0">
+        <div
+          className="text-[12.5px] text-ink leading-[1.4] overflow-hidden"
+          style={{
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+          }}
+        >
+          {preview}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-ink-3 text-[11px]">
+          <span className="font-fl-mono">{formatClock(dictation.created_at)}</span>
+          <span className="w-[2px] h-[2px] rounded-full bg-ink-4" />
+          <span className="font-fl-mono">{formatDuration(dictation.duration_ms)}</span>
+          {profileName && (
+            <>
+              <span className="w-[2px] h-[2px] rounded-full bg-ink-4" />
+              <span>{profileName}</span>
+            </>
+          )}
+          {dictation.favorite && (
+            <>
+              <span className="flex-1" />
+              <IconStar size={11} filled color="var(--color-amber)" />
+            </>
+          )}
+        </div>
+      </div>
+    </button>
   );
 }

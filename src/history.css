@@ -30,12 +30,13 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.scrollable::-webkit-scrollbar { width: 8px; }
-.scrollable::-webkit-scrollbar-thumb {
-  background: light-dark(rgba(0,0,0,0.18), rgba(255,255,255,0.10));
-  border-radius: 8px;
-}
-.scrollable::-webkit-scrollbar-track { background: transparent; }
+/* Scrollbars are intentionally NOT customized — macOS WKWebView honors
+   the user's System Settings → Appearance → "Show scroll bars" choice
+   (Automatically / When scrolling / Always). Forcing
+   ::-webkit-scrollbar styles here pinned them to permanent, which fights
+   the native fade-on-idle behavior trackpad users expect. The
+   `.scrollable` class is left as a marker on overflow containers in
+   case we ever need to scope styling later. */
 
 /* ──────────────────────────────────────────────────────────────────────
    Shell — three-pane Mail.app shape:

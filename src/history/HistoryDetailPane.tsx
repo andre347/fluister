@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  ClipboardPaste,
-  Copy,
-  Plus,
-  Star,
-  Trash2,
-} from "lucide-react";
 import { commands, type Dictation } from "../lib/tauri";
-import { Button } from "../components/ui/button";
-import { cn } from "../lib/utils";
+import { Btn, Tag } from "../components/atoms";
+import {
+  IconCopy,
+  IconPlus,
+  IconStar,
+  IconTrash,
+} from "../components/icons";
+import { profileDotColor } from "../lib/profiles";
 
 type Props = {
   dictation: Dictation | null;
@@ -21,11 +18,11 @@ type Props = {
   copyFlash: boolean;
   onAddedToVocab: (id: number) => void;
   /** Profile id → display name. Null name (or null id on the dictation)
-   *  hides the profile segment from the meta line. */
+   *  hides the profile chip from the meta line. */
   profileNames: Map<number, string>;
 };
 
-function formatMeta(ts: number): string {
+function formatHeaderTime(ts: number): string {
   const d = new Date(ts);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -34,16 +31,14 @@ function formatMeta(ts: number): string {
 
   const dayLabel =
     itemDay.getTime() === today.getTime()
-      ? "TODAY"
+      ? "Today"
       : itemDay.getTime() === today.getTime() - 86_400_000
-        ? "YESTERDAY"
-        : d
-            .toLocaleDateString(undefined, {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-            })
-            .toUpperCase();
+        ? "Yesterday"
+        : d.toLocaleDateString(undefined, {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          });
 
   const time = d.toLocaleTimeString(undefined, {
     hour: "2-digit",
@@ -67,110 +62,79 @@ export function HistoryDetailPane({
     dictation?.profile_id != null
       ? profileNames.get(dictation.profile_id) ?? null
       : null;
-  const [rawOpen, setRawOpen] = useState(true);
 
   if (!dictation) {
     return (
-      <div className="hist-detail-empty">
-        <span>Select a dictation to see the full transcript.</span>
+      <div className="flex-1 flex items-center justify-center text-[13px] text-ink-3 bg-window-bg">
+        Select a dictation to see the full transcript.
       </div>
     );
   }
 
+  const dotVar = profileDotColor(profileName);
+  const showRaw = dictation.raw_text && dictation.raw_text !== dictation.cleaned_text;
+
   return (
-    <div className="hist-detail">
-      <div className="hist-detail-header">
-        <div className="text-tag font-medium uppercase tracking-wider text-faint">
-          {formatMeta(dictation.created_at)}
-          {profileName && (
-            <>
-              {" · "}
-              <span>{profileName.toUpperCase()} PROFILE</span>
-            </>
-          )}
-          {dictation.duration_ms > 0 && (
-            <>
-              {" · "}
-              <span className="font-mono normal-case tracking-normal">
-                {(dictation.duration_ms / 1000).toFixed(1)}s
-              </span>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onFavorite}
-            title={dictation.favorite ? "Unfavorite" : "Favorite"}
-            className="h-8 w-9 px-0"
-          >
-            <Star
-              size={14}
-              aria-hidden
-              className={cn(
-                dictation.favorite &&
-                  "fill-[color:var(--color-accent-yellow)] text-[color:var(--color-accent-yellow)]",
-              )}
-            />
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={onPaste}
-            className="h-8 gap-1.5 text-caption"
-          >
-            <ClipboardPaste size={13} aria-hidden />
-            <span>Paste</span>
-            <kbd className="font-mono text-[10px] opacity-80 ml-0.5">⌘V</kbd>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onCopy}
-            title="Copy (⌘C)"
-            className={cn(
-              "h-8 px-2.5 gap-1 text-caption",
-              copyFlash && "text-[color:var(--color-success)]",
-            )}
-          >
-            <Copy size={13} aria-hidden />
-            <span>Copy</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDelete}
-            title="Delete (⌘⌫)"
-            className="h-8 w-9 px-0 text-text-muted hover:text-[color:var(--color-danger)]"
-          >
-            <Trash2 size={14} aria-hidden />
-          </Button>
+    <div className="flex-1 min-w-0 flex flex-col bg-window-bg">
+      {/* Header */}
+      <div className="px-6 py-4 border-b-[0.5px] border-hair">
+        <div className="flex items-center gap-2">
+          <span
+            className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{ background: dotVar }}
+            aria-hidden
+          />
+          <span className="text-[12px] text-ink-2">
+            {profileName ?? "No profile"}
+          </span>
+          <span className="flex-1" />
+          {profileName && <Tag tone="amber">{profileName}</Tag>}
+          <span className="font-fl-mono text-[11px] text-ink-3">
+            {formatHeaderTime(dictation.created_at)}
+          </span>
         </div>
       </div>
 
-      <div className="hist-detail-scroll scrollable">
+      {/* Transcript bodies */}
+      <div className="flex-1 overflow-y-auto scrollable px-6 py-5">
+        <div className="font-sf text-[11px] font-semibold uppercase tracking-[0.4px] text-ink-3 mb-2 flex items-center gap-2">
+          <span>Cleaned</span>
+        </div>
         <SelectableBody
           text={dictation.cleaned_text}
           onAdded={onAddedToVocab}
         />
 
-        {dictation.raw_text && dictation.raw_text !== dictation.cleaned_text && (
+        {showRaw && (
           <>
-            <div className="hist-detail-separator" />
-            <button
-              type="button"
-              onClick={() => setRawOpen((o) => !o)}
-              className="flex items-center gap-1 text-tag font-medium uppercase tracking-wider text-faint hover:text-foreground transition-colors"
-            >
-              {rawOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            <div className="mt-6 font-sf text-[11px] font-semibold uppercase tracking-[0.4px] text-ink-3 mb-2 flex items-center gap-2">
               <span>Raw transcript</span>
-            </button>
-            {rawOpen && (
-              <div className="hist-detail-raw">{dictation.raw_text}</div>
-            )}
+            </div>
+            <p
+              className="m-0 font-fl-mono text-[12.5px] text-ink-2"
+              style={{ lineHeight: 1.6 }}
+            >
+              {dictation.raw_text}
+            </p>
           </>
         )}
+      </div>
+
+      {/* Footer actions */}
+      <div className="flex items-center gap-2 px-4 py-2.5 border-t-[0.5px] border-hair">
+        <Btn icon={<IconCopy size={12} />} onClick={onCopy}>
+          {copyFlash ? "Copied" : "Copy"}
+        </Btn>
+        <Btn icon={<IconStar size={12} />} onClick={onFavorite}>
+          {dictation.favorite ? "Unstar" : "Star"}
+        </Btn>
+        <Btn kind="primary" onClick={onPaste}>
+          Paste ⌘V
+        </Btn>
+        <span className="flex-1" />
+        <Btn kind="danger" icon={<IconTrash size={12} />} onClick={onDelete}>
+          Delete
+        </Btn>
       </div>
     </div>
   );
@@ -190,7 +154,7 @@ function SelectableBody({
   text: string;
   onAdded: (id: number) => void;
 }) {
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLParagraphElement>(null);
   const [selection, setSelection] = useState<{
     text: string;
     rect: DOMRect;
@@ -198,8 +162,6 @@ function SelectableBody({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
-  // Recompute selection on mouseup / keyup. selectionchange would also work
-  // but fires on every cursor movement and is harder to scope.
   useEffect(() => {
     const handler = () => {
       const sel = window.getSelection();
@@ -228,11 +190,10 @@ function SelectableBody({
     };
   }, []);
 
-  // Dismiss the chip when scrolling — its anchor goes stale.
   useEffect(() => {
     if (!selection) return;
     const dismiss = () => setSelection(null);
-    const scroller = bodyRef.current?.closest(".hist-detail-scroll");
+    const scroller = bodyRef.current?.closest(".scrollable");
     scroller?.addEventListener("scroll", dismiss, { passive: true });
     window.addEventListener("resize", dismiss);
     return () => {
@@ -251,8 +212,6 @@ function SelectableBody({
       });
       window.getSelection()?.removeAllRanges();
       setSelection(null);
-      // Hand off to the parent — it switches to the Vocabulary tab and
-      // pre-selects the new entry so the user can add aliases right away.
       onAdded(created.id);
     } catch (err) {
       console.error("create_vocabulary_entry failed", err);
@@ -265,13 +224,17 @@ function SelectableBody({
 
   return (
     <>
-      <div ref={bodyRef} className="hist-detail-body">
+      <p
+        ref={bodyRef}
+        className="m-0 text-[15px] text-ink"
+        style={{ lineHeight: 1.55, textWrap: "pretty" }}
+      >
         {text}
-      </div>
+      </p>
 
       {selection && (
         <div
-          className="hist-vocab-floater"
+          className="fixed z-50"
           style={{
             top: selection.rect.bottom + 8,
             left: Math.max(8, selection.rect.left),
@@ -281,16 +244,19 @@ function SelectableBody({
             type="button"
             onClick={handleAdd}
             disabled={adding}
-            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-foreground text-background text-caption shadow-md hover:opacity-90 transition-opacity disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-ink text-ink-inverse text-[12px] shadow-md hover:opacity-90 transition-opacity disabled:opacity-60"
           >
-            <Plus size={12} aria-hidden />
+            <IconPlus size={12} />
             <span>Add to vocabulary</span>
           </button>
         </div>
       )}
 
       {errorMsg && (
-        <div className="hist-vocab-toast" role="status">
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 px-3 py-2 rounded-md bg-ink text-ink-inverse text-[12px] shadow-md z-50"
+        >
           {errorMsg}
         </div>
       )}

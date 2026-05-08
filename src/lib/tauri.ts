@@ -45,6 +45,15 @@ export interface Profile {
   style_prompt: string;
   vocabulary: string;
   created_at: number;
+  /** macOS bundle IDs (e.g. "com.apple.mail") where this profile auto-
+   *  activates when the user holds the dictation hotkey. Empty list means
+   *  no auto-binding. */
+  app_bindings: string[];
+}
+
+export interface InstalledApp {
+  bundle_id: string;
+  name: string;
 }
 
 export interface VocabularyEntry {
@@ -169,23 +178,58 @@ export const commands = {
   listOllamaModels: () => invoke<OllamaModel[]>("list_ollama_models"),
 
   // Profiles
+  //
+  // Tauri 2 expects camelCase argument names in invoke payloads — it
+  // auto-converts to snake_case Rust parameters. Sending snake_case
+  // ("style_prompt") fails with "missing required key stylePrompt". So
+  // these bindings translate at the boundary and the rest of the app
+  // stays free to use the snake_case Profile shape that comes back.
   listProfiles: () => invoke<Profile[]>("list_profiles"),
   createProfile: (input: {
     name: string;
     description: string;
     style_prompt: string;
     vocabulary: string;
-  }) => invoke<Profile>("create_profile", input as Record<string, unknown>),
+    app_bindings?: string[];
+  }) =>
+    invoke<Profile>("create_profile", {
+      name: input.name,
+      description: input.description,
+      stylePrompt: input.style_prompt,
+      vocabulary: input.vocabulary,
+      appBindings: input.app_bindings,
+    }),
   updateProfile: (input: {
     id: number;
     name: string;
     description: string;
     style_prompt: string;
     vocabulary: string;
-  }) => invoke<void>("update_profile", input as Record<string, unknown>),
+    app_bindings?: string[];
+  }) =>
+    invoke<void>("update_profile", {
+      id: input.id,
+      name: input.name,
+      description: input.description,
+      stylePrompt: input.style_prompt,
+      vocabulary: input.vocabulary,
+      appBindings: input.app_bindings,
+    }),
   deleteProfile: (id: number) => invoke<void>("delete_profile", { id }),
   setActiveProfile: (id: number | null) =>
     invoke<void>("set_active_profile", { id }),
+  /** macOS app picker — enumerates /Applications, ~/Applications and
+   *  /System/Applications via NSBundle. Returns ~150 entries on a
+   *  typical machine; the UI filters client-side. */
+  listInstalledApps: () => invoke<InstalledApp[]>("list_installed_apps"),
+  /** Run the Ollama cleanup pipeline against arbitrary raw text + style
+   *  prompt. Used by the Profiles editor's live preview pane. Returns
+   *  the cleaned string, or rejects with a stringified error. */
+  cleanupPreview: (raw: string, stylePrompt: string) =>
+    invoke<string>("cleanup_preview", {
+      rawText: raw,
+      stylePrompt,
+    }),
 
   // Vocabulary
   listVocabulary: () => invoke<VocabularyEntry[]>("list_vocabulary"),

@@ -13,6 +13,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 #[cfg(target_os = "macos")]
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
 
+mod apps;
 mod audio;
 mod db;
 mod frontmost;
@@ -257,12 +258,16 @@ fn reconcile_vault_into_db(
             }
             None => {
                 let created = vp.created_at.timestamp_millis();
+                // Vault profiles don't carry app_bindings yet — those live
+                // only in the local SQLite cache. Pass an empty slice; the
+                // user can re-bind apps after the row lands.
                 database.create_profile_with_ulid(
                     &ulid_str,
                     &vp.name,
                     &vp.description,
                     &vp.style_prompt,
                     &vp.vocabulary,
+                    &[],
                     created,
                 )?;
             }
@@ -1282,10 +1287,12 @@ fn create_profile(
     description: String,
     style_prompt: String,
     vocabulary: String,
+    app_bindings: Option<Vec<String>>,
 ) -> Result<db::Profile, String> {
+    let bindings = app_bindings.unwrap_or_default();
     let p = state
         .db
-        .create_profile(&name, &description, &style_prompt, &vocabulary)
+        .create_profile(&name, &description, &style_prompt, &vocabulary, &bindings)
         .map_err(|e| e.to_string())?;
     if let Some(root) = vault_root(&state) {
         if let Err(e) = vault_write_profile(&root, &p) {
@@ -1305,14 +1312,16 @@ fn update_profile(
     description: String,
     style_prompt: String,
     vocabulary: String,
+    app_bindings: Option<Vec<String>>,
 ) -> Result<(), String> {
     // Capture pre-update name + ulid so we can delete the old vault file
     // if the user renamed the profile (slugified filename changes).
     let pre = state.db.get_profile(id).map_err(|e| e.to_string())?;
 
+    let bindings = app_bindings.unwrap_or_default();
     state
         .db
-        .update_profile(id, &name, &description, &style_prompt, &vocabulary)
+        .update_profile(id, &name, &description, &style_prompt, &vocabulary, &bindings)
         .map_err(|e| e.to_string())?;
 
     if let Some(root) = vault_root(&state) {
@@ -1469,6 +1478,42 @@ fn delete_vocabulary_entry(
     Ok(())
 }
 
+// ─── Apps + cleanup preview ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_installed_apps() -> Vec<apps::InstalledApp> {
+    // Off the main thread is ideal but the walk is fast (~150 entries on
+    // a typical machine) and runs as a one-shot from the profile editor.
+    apps::list_installed()
+}
+
+/// Run the actual Ollama cleanup pipeline for the Profiles editor live
+/// preview. Mirrors what `run_pipeline` does post-Whisper but lets the UI
+/// hand in arbitrary raw text + an arbitrary style prompt without
+/// affecting the user's persisted profiles.
+///
+/// Returns the cleaned text on success, or an Err string for the UI to
+/// surface inline ("Ollama not running" etc.) without having to log into
+/// the dev console.
+#[tauri::command]
+async fn cleanup_preview(
+    state: State<'_, AppState>,
+    raw_text: String,
+    style_prompt: String,
+) -> Result<String, String> {
+    // Empty input → empty output, no point pinging Ollama.
+    if raw_text.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let (model, language) = {
+        let s = state.settings.lock();
+        (s.ollama_model.clone(), s.language.clone())
+    };
+    ollama::cleanup(&raw_text, &model, &language, &style_prompt)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ─── Tray icon ───────────────────────────────────────────────────────────────
 
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
@@ -1586,6 +1631,8 @@ pub fn run() {
             clear_vault_path,
             open_vault_in_finder,
             suggested_vault_path,
+            list_installed_apps,
+            cleanup_preview,
         ])
         .on_window_event(|window, event| match window.label() {
             "history" | "onboarding" => {

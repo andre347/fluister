@@ -96,10 +96,26 @@
   --color-amber:      #E8A961;
   --color-amber-ink:  #B27A30;
   --color-amber-tint: #F8E9CF;
+  --color-amber-soft: rgba(232, 169, 97, 0.06);
   --color-red:        #FF3B30;
   --color-fl-green:   #34C759;
   --color-fl-blue:    #0A84FF;
   --color-fl-yellow:  #FFD60A;
+
+  /* Surface variants — used in the History list pane and the Vocabulary
+     table chrome (the "header" / "footer" bands a touch darker than the
+     window background). */
+  --color-list-bg:         #FCFCFA;
+  --color-table-header-bg: #F7F7F4;
+
+  /* Per-profile dot colors. Mapped from profile name in code (slack →
+     profile-slack, etc.) since `db::Profile` has no dot_color column.
+     Unknown profiles fall back to --color-amber. */
+  --color-profile-slack:   #5DA0E8;
+  --color-profile-notes:   #A8C46B;
+  --color-profile-code:    #C77A8E;
+  --color-profile-standup: #7AB8B0;
+  --color-profile-commit:  #C9A35E;
 
   /* HUD-only — values lifted directly from design/app/recording.jsx
      (no token name in tokens.jsx for these). Scoped to the recording
