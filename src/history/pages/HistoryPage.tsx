@@ -3,15 +3,7 @@ import { commands, type Dictation, type Profile } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
 import { HistoryListPane } from "../HistoryListPane";
 import { HistoryDetailPane } from "../HistoryDetailPane";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../components/ui/dialog";
-import { Button } from "../../components/ui/button";
+import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
 
 type Props = {
   onAddedToVocab: (id: number) => void;
@@ -262,27 +254,13 @@ export function HistoryPage({ onAddedToVocab }: Props) {
         profileNames={profileNames}
       />
 
-      <Dialog
+      <ConfirmDeleteDialog
         open={pendingDelete !== null}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete this dictation?</DialogTitle>
-            <DialogDescription>
-              This can&apos;t be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeleteConfirm}>
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title="Delete this dictation?"
+        description="This can't be undone."
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

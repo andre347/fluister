@@ -46,16 +46,6 @@ export function isEnglishLanguage(code: string): boolean {
   return code === "en" || code.startsWith("en-");
 }
 
-/** Filename of the default Whisper model recommended for a given language. */
-export function recommendedWhisperFilename(code: string): string {
-  return isEnglishLanguage(code) ? "ggml-base.en.bin" : "ggml-base.bin";
-}
-
-/** Display label for the recommended model. */
-export function recommendedWhisperLabel(code: string): string {
-  return isEnglishLanguage(code) ? "Base · English only" : "Base · multilingual";
-}
-
 export function languageDisplayName(code: string): string {
   return LANGUAGES.find((l) => l.code === code)?.name ?? code;
 }

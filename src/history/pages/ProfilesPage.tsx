@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
 import { commands, type Profile } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../components/ui/dialog";
+import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
+import { EditorHeader } from "../EditorHeader";
+import { EmptyDetail } from "../EmptyDetail";
+import { NewItemToolbar } from "../NewItemToolbar";
 import { cn } from "../../lib/utils";
 
 const NEW_KEY = "__new__";
@@ -82,18 +77,11 @@ export function ProfilesPage() {
   return (
     <div className="hist-twocol">
       <div className="hist-list-pane">
-        <div className="hist-list-toolbar">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="w-full justify-start gap-2 h-8 text-item"
-            onClick={() => setSelection(NEW_KEY)}
-            aria-pressed={selection === NEW_KEY}
-          >
-            <Plus size={13} aria-hidden />
-            <span>New profile</span>
-          </Button>
-        </div>
+        <NewItemToolbar
+          label="New profile"
+          selected={selection === NEW_KEY}
+          onSelect={() => setSelection(NEW_KEY)}
+        />
         <div className="hist-list-scroll scrollable">
           {profiles.length === 0 && selection !== NEW_KEY ? (
             <div className="hist-list-empty">No profiles yet</div>
@@ -165,35 +153,15 @@ export function ProfilesPage() {
         <EmptyDetail label="Profile not found." />
       )}
 
-      <Dialog
+      <ConfirmDeleteDialog
         open={pendingDelete !== null}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete profile?</DialogTitle>
-            <DialogDescription>
-              {pendingDelete ? `“${pendingDelete.name}” will be removed.` : ""}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeleteConfirm}>
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function EmptyDetail({ label }: { label: string }) {
-  return (
-    <div className="hist-detail-empty">
-      <span>{label}</span>
+        title="Delete profile?"
+        description={
+          pendingDelete ? `“${pendingDelete.name}” will be removed.` : ""
+        }
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }
@@ -270,42 +238,23 @@ function ProfileEditor({
 
   return (
     <div className="hist-detail">
-      <div className="hist-detail-header">
-        <div className="text-tag font-medium uppercase tracking-wider text-faint">
-          {isNew ? "New profile" : "Edit profile"}
-          {dirty && !isNew && (
-            <span className="ml-2 normal-case text-text-muted tracking-normal">
-              · Unsaved
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {!isNew && profile && !isActive && (
-            <Button variant="ghost" size="sm" onClick={onSetActive} className="h-8">
-              Make active
-            </Button>
-          )}
-          {isNew && onCancel && (
-            <Button variant="ghost" size="sm" onClick={onCancel} className="h-8">
-              Cancel
-            </Button>
-          )}
-          {!isNew && profile && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              title="Delete"
-              className="h-8 w-9 px-0 text-text-muted hover:text-[color:var(--color-danger)]"
-            >
-              <Trash2 size={14} aria-hidden />
-            </Button>
-          )}
-          <Button onClick={handleSave} disabled={!canSave} size="sm" className="h-8">
-            {saving ? "Saving…" : isNew ? "Create" : "Save"}
+      <EditorHeader
+        title={isNew ? "New profile" : "Edit profile"}
+        dirty={dirty}
+        isNew={isNew}
+        canDelete={!isNew && !!profile}
+        saving={saving}
+        canSave={canSave}
+        onCancel={onCancel}
+        onDelete={onDelete}
+        onSave={handleSave}
+      >
+        {!isNew && profile && !isActive && (
+          <Button variant="ghost" size="sm" onClick={onSetActive} className="h-8">
+            Make active
           </Button>
-        </div>
-      </div>
+        )}
+      </EditorHeader>
 
       <div className="hist-detail-scroll">
         <div className="flex flex-col gap-5 max-w-[640px]">
