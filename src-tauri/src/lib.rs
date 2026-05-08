@@ -1654,6 +1654,20 @@ pub fn run() {
                 }
             }
 
+            // The pill is purely a status indicator — never receives
+            // clicks — so the overlay window is configured to pass every
+            // mouse event through to whatever's underneath. We don't
+            // apply NSVisualEffectView at the window level either; doing
+            // so paints the entire window with an opaque frosted backdrop
+            // that shows up as a grey rectangle around the pill. The
+            // pill provides its own translucent-dark fill via CSS.
+            #[cfg(target_os = "macos")]
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                if let Err(err) = overlay.set_ignore_cursor_events(true) {
+                    log::warn!("overlay set_ignore_cursor_events failed: {err:?}");
+                }
+            }
+
             // First-launch (or any launch where onboarding was skipped):
             // open the welcome window so the user can grant permissions
             // and pick a model before trying the hotkey.

@@ -70,6 +70,67 @@
   /* SF Pro — replaces shadcn's default Geist. */
   --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
   --font-sans:   var(--font-system);
+
+  /* ── Fluister design-token namespace (mirrors design/app/tokens.jsx) ──
+     Names match `FL.*` 1:1 so utilities like `bg-amber`, `text-ink-2`,
+     `rounded-card`, `font-sf` line up with the design source. These are
+     intentionally separate from the shadcn-bridged tokens above so the
+     two layers don't collide. */
+  --color-window-bg:       #FAFAF7;
+  --color-sidebar-bg:      rgba(245, 245, 242, 0.72);
+  --color-sheet-bg:        #FFFFFF;
+  --color-fl-hover:        rgba(0, 0, 0, 0.04);
+  --color-selection:       rgba(232, 169, 97, 0.16);
+  --color-selection-strong: rgba(232, 169, 97, 0.28);
+  --color-fill:            #F2F2EF;
+
+  --color-ink:         #1d1d1f;
+  --color-ink-2:       #3c3c43cc;
+  --color-ink-3:       #3c3c4399;
+  --color-ink-4:       #3c3c4366;
+  --color-ink-inverse: #ffffff;
+
+  --color-hair:        rgba(0, 0, 0, 0.08);
+  --color-hair-strong: rgba(0, 0, 0, 0.14);
+
+  --color-amber:      #E8A961;
+  --color-amber-ink:  #B27A30;
+  --color-amber-tint: #F8E9CF;
+  --color-red:        #FF3B30;
+  --color-fl-green:   #34C759;
+  --color-fl-blue:    #0A84FF;
+  --color-fl-yellow:  #FFD60A;
+
+  /* HUD-only — values lifted directly from design/app/recording.jsx
+     (no token name in tokens.jsx for these). Scoped to the recording
+     overlay; not used elsewhere. */
+  --color-hud-bg:        rgba(28, 24, 20, 0.86);
+  --color-hud-ink:       #fbf8f2;
+  --color-hud-ink-2:     #cdc4b6;
+  --color-hud-muted:     #8a7f6e;
+  --color-hud-key:       #a89c87;
+  --color-hud-stroke:    rgba(255, 255, 255, 0.18);
+  --color-hud-divider:   rgba(255, 255, 255, 0.10);
+  --color-hud-selection: rgba(232, 169, 97, 0.18);
+
+  --radius-win:  10px;
+  --radius-card: 8px;
+  --radius-ctl:  6px;
+  --radius-pill: 999px;
+
+  --font-sf:         var(--font-system);
+  --font-sf-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+  --font-fl-mono:    ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Recording-dot pulse — exposed as a Tailwind v4 animation token so
+     `animate-flu-pulse` resolves to a real utility. The keyframes live
+     outside @theme (Tailwind only registers tokens, not @keyframes). */
+  --animate-flu-pulse: flu-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes flu-pulse {
+  0%, 100% { opacity: 1;    }
+  50%      { opacity: 0.55; }
 }
 
 /* ──────────────────────────────────────────────────────────────────────
