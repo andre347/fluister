@@ -32,6 +32,9 @@ src-tauri/icons/app-icon-original.png
 # Local-only design brief (kept on disk, not in git)
 FLUISTER_DESIGN_BRIEF.md
 
+# Personal screenshots used while sketching designs
+design/uploads/
+
 # Environment files (safety net — never commit secrets)
 .env
 .env.*
