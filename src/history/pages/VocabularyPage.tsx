@@ -1,21 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { commands, type VocabularyEntry } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
-import { Input } from "../../components/ui/input";
+import {
+  Btn,
+  GroupLabel,
+  SearchBox,
+  Toolbar,
+} from "../../components/atoms";
+import { IconGrip, IconPlus, IconTrash, IconX } from "../../components/icons";
+// Note: Btn is still used by InlineAddRow's "Add ⏎" submit button below.
 import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
-import { EditorHeader } from "../EditorHeader";
-import { EmptyDetail } from "../EmptyDetail";
-import { NewItemToolbar } from "../NewItemToolbar";
-import { cn } from "../../lib/utils";
-
-const NEW_KEY = "__new__";
-type Selection = number | typeof NEW_KEY | null;
 
 type Props = {
-  /** When set, the Vocabulary page selects this entry on mount and clears
-   *  the intent via `onFocusConsumed`. Used by History's "Add to vocabulary"
-   *  flow to drop the user straight onto the new term. */
+  /** When set on mount, the table scrolls the matching entry into view
+   *  and flashes a focus ring on its term cell so the user knows where the
+   *  "Add to vocabulary" handoff from History landed them. */
   focusEntryId?: number | null;
   onFocusConsumed?: () => void;
 };
@@ -26,10 +31,10 @@ export function VocabularyPage({
 }: Props) {
   const [entries, setEntries] = useState<VocabularyEntry[]>([]);
   const [search, setSearch] = useState("");
-  const [selection, setSelection] = useState<Selection>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<VocabularyEntry | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [flashedId, setFlashedId] = useState<number | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,20 +43,14 @@ export function VocabularyPage({
       .then((items) => {
         if (cancelled) return;
         setEntries(items);
-        setSelection((curr) => {
-          // A pending focus from History's "Add to vocabulary" wins.
-          if (
-            focusEntryId !== null &&
-            items.some((e) => e.id === focusEntryId)
-          ) {
-            return focusEntryId;
-          }
-          if (curr === NEW_KEY) return curr;
-          if (typeof curr === "number" && items.some((e) => e.id === curr))
-            return curr;
-          return items[0]?.id ?? null;
-        });
-        if (focusEntryId !== null) onFocusConsumed?.();
+        if (
+          focusEntryId !== null &&
+          items.some((e) => e.id === focusEntryId)
+        ) {
+          setFlashedId(focusEntryId);
+          window.setTimeout(() => setFlashedId(null), 1600);
+          onFocusConsumed?.();
+        }
       })
       .catch((err) => console.error("list_vocabulary failed", err));
     return () => {
@@ -63,17 +62,14 @@ export function VocabularyPage({
     setRefreshTick((n) => n + 1);
   });
 
-  const handleDeleteConfirm = useCallback(async () => {
-    const target = pendingDelete;
-    if (!target) return;
-    setPendingDelete(null);
-    try {
-      await commands.deleteVocabularyEntry(target.id);
-      setSelection((curr) => (curr === target.id ? null : curr));
-    } catch (err) {
-      console.error("delete_vocabulary_entry failed", err);
-    }
-  }, [pendingDelete]);
+  // Scroll the flashed row into view once the table renders it.
+  useEffect(() => {
+    if (flashedId == null || !tableRef.current) return;
+    const row = tableRef.current.querySelector<HTMLElement>(
+      `[data-vocab-id="${flashedId}"]`,
+    );
+    row?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [flashedId, entries]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -85,102 +81,121 @@ export function VocabularyPage({
     );
   }, [entries, search]);
 
-  const selectedEntry = useMemo<VocabularyEntry | null>(() => {
-    if (selection === NEW_KEY) return null;
-    if (typeof selection === "number") {
-      return entries.find((e) => e.id === selection) ?? null;
+  const handleCreate = useCallback(
+    async (term: string, aliasInput: string) => {
+      const aliases = aliasInput
+        .split(",")
+        .map((a) => a.trim())
+        .filter(Boolean);
+      try {
+        await commands.createVocabularyEntry({ term: term.trim(), aliases });
+      } catch (err) {
+        console.error("create_vocabulary_entry failed", err);
+      }
+    },
+    [],
+  );
+
+  const handleUpdateAliases = useCallback(
+    async (entry: VocabularyEntry, nextAliases: string[]) => {
+      try {
+        await commands.updateVocabularyEntry({
+          id: entry.id,
+          term: entry.term,
+          aliases: nextAliases,
+        });
+      } catch (err) {
+        console.error("update_vocabulary_entry failed", err);
+      }
+    },
+    [],
+  );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    const target = pendingDelete;
+    if (!target) return;
+    setPendingDelete(null);
+    try {
+      await commands.deleteVocabularyEntry(target.id);
+    } catch (err) {
+      console.error("delete_vocabulary_entry failed", err);
     }
-    return null;
-  }, [entries, selection]);
+  }, [pendingDelete]);
+
+  const aliasTotal = entries.reduce((sum, e) => sum + e.aliases.length, 0);
 
   return (
-    <div className="hist-twocol">
-      <div className="hist-list-pane">
-        <NewItemToolbar
-          label="New term"
-          selected={selection === NEW_KEY}
-          onSelect={() => setSelection(NEW_KEY)}
-        />
-        <div className="hist-list-search">
-          <SearchIcon />
-          <Input
-            ref={searchRef}
-            type="search"
-            placeholder="Search vocabulary"
-            autoComplete="off"
-            spellCheck={false}
+    <div className="flex flex-col h-full min-h-0">
+      <Toolbar
+        section="Vocabulary"
+        center={
+          <SearchBox
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-7 pl-6 text-footnote bg-transparent border-0 shadow-none focus-visible:ring-0"
+            onChange={setSearch}
+            placeholder="Filter terms"
+            width={280}
+            shortcutHint=""
           />
-        </div>
-        <div className="hist-list-scroll scrollable">
-          {filtered.length === 0 && selection !== NEW_KEY ? (
-            <div className="hist-list-empty">
-              {search ? "No matches" : "No vocabulary terms yet"}
-            </div>
-          ) : (
-            filtered.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => setSelection(entry.id)}
-                aria-pressed={selection === entry.id}
-                className={cn(
-                  "hist-list-row",
-                  selection === entry.id && "hist-list-row-selected",
-                )}
-              >
-                <div className="text-item font-medium truncate">
-                  {entry.term}
-                </div>
-                {entry.aliases.length > 0 && (
-                  <div className="hist-list-row-text text-text-muted">
-                    {entry.aliases.join(", ")}
-                  </div>
-                )}
-              </button>
-            ))
-          )}
-          {selection === NEW_KEY && (
-            <div className="hist-list-row hist-list-row-selected">
-              <div className="text-item font-medium italic text-text-muted">
-                New term…
+        }
+      />
+
+      <div className="flex-1 flex min-h-0">
+        <VocabSidebar count={entries.length} />
+
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {/* Table header — column template matches the rows below
+              (drag/term/aliases/hover-delete). */}
+          <div
+            className="grid items-center gap-3 px-4 py-2 border-b-[0.5px] border-hair font-sf text-[11px] font-semibold uppercase tracking-[0.4px] text-ink-3"
+            style={{
+              gridTemplateColumns: "32px 1.2fr 2fr 32px",
+              background: "var(--color-table-header-bg)",
+            }}
+          >
+            <span></span>
+            <span>Term</span>
+            <span>Aliases</span>
+            <span></span>
+          </div>
+
+          <div ref={tableRef} className="flex-1 overflow-y-auto scrollable">
+            <InlineAddRow onCreate={handleCreate} />
+            {filtered.length === 0 && entries.length > 0 && (
+              <div className="px-4 py-6 text-center text-[12px] text-ink-3">
+                No matches
               </div>
-            </div>
-          )}
+            )}
+            {filtered.length === 0 && entries.length === 0 && (
+              <div className="px-4 py-6 text-center text-[12px] text-ink-3">
+                No vocabulary terms yet — add one above.
+              </div>
+            )}
+            {filtered.map((entry) => (
+              <VocabRow
+                key={entry.id}
+                entry={entry}
+                flashed={entry.id === flashedId}
+                onAliasesChange={(next) => handleUpdateAliases(entry, next)}
+                onDelete={() => setPendingDelete(entry)}
+              />
+            ))}
+          </div>
+
+          <div
+            className="px-4 py-2 border-t-[0.5px] border-hair flex items-center gap-2 text-[11px] text-ink-3 font-fl-mono"
+            style={{ background: "var(--color-table-header-bg)" }}
+          >
+            <span>
+              {entries.length} {entries.length === 1 ? "term" : "terms"} ·{" "}
+              {aliasTotal} {aliasTotal === 1 ? "alias" : "aliases"}
+            </span>
+          </div>
         </div>
       </div>
 
-      {selection === null ? (
-        <EmptyDetail label="Select a term to edit, or create a new one." />
-      ) : selection === NEW_KEY ? (
-        <VocabularyEditor
-          key="new"
-          isNew
-          entry={null}
-          onDelete={() => {}}
-          onSaved={(saved) => {
-            setRefreshTick((n) => n + 1);
-            setSelection(saved.id);
-          }}
-          onCancel={() => setSelection(entries[0]?.id ?? null)}
-        />
-      ) : selectedEntry ? (
-        <VocabularyEditor
-          key={selectedEntry.id}
-          isNew={false}
-          entry={selectedEntry}
-          onDelete={() => setPendingDelete(selectedEntry)}
-          onSaved={() => setRefreshTick((n) => n + 1)}
-        />
-      ) : (
-        <EmptyDetail label="Term not found." />
-      )}
-
       <ConfirmDeleteDialog
         open={pendingDelete !== null}
-        title="Delete term?"
+        title="Delete vocabulary term?"
         description={
           pendingDelete ? `“${pendingDelete.term}” will be removed.` : ""
         }
@@ -191,166 +206,182 @@ export function VocabularyPage({
   );
 }
 
-function VocabularyEditor({
-  isNew,
-  entry,
-  onDelete,
-  onSaved,
-  onCancel,
-}: {
-  isNew: boolean;
-  entry: VocabularyEntry | null;
-  onDelete: () => void;
-  onSaved: (saved: VocabularyEntry) => void;
-  onCancel?: () => void;
-}) {
-  const baseline = entry ?? { term: "", aliases: [] as string[] };
-  const [term, setTerm] = useState(baseline.term);
-  const [aliases, setAliases] = useState<string[]>(baseline.aliases);
-  const [aliasDraft, setAliasDraft] = useState("");
-  const [saving, setSaving] = useState(false);
+function VocabSidebar({ count }: { count: number }) {
+  // Minimal sidebar for v1 — the design splits by Frequent/Unused/profile,
+  // but vocabulary doesn't track per-row usage frequency or per-profile
+  // association in the current schema. Render the structure with just
+  // "All terms" so the layout matches; the empty groups land later.
+  return (
+    <aside
+      className="flex flex-col flex-shrink-0 overflow-y-auto border-r-[0.5px] border-hair backdrop-blur-2xl backdrop-saturate-[1.8]"
+      style={{ width: 200, background: "var(--color-sidebar-bg)" }}
+    >
+      <GroupLabel>Scope</GroupLabel>
+      <div className="px-2">
+        <div className="flex items-center px-2 h-6 rounded-[5px] bg-selection text-[13px]">
+          <span className="flex-1 font-medium text-ink">All terms</span>
+          <span className="font-fl-mono text-[11px] text-ink-3">{count}</span>
+        </div>
+      </div>
+    </aside>
+  );
+}
 
-  const dirty =
-    term !== baseline.term ||
-    aliases.join("|") !== baseline.aliases.join("|");
-  const canSave = term.trim().length > 0 && (isNew || dirty) && !saving;
+interface InlineAddProps {
+  onCreate: (term: string, aliases: string) => Promise<void>;
+}
 
-  const addAlias = () => {
-    const next = aliasDraft.trim();
-    if (!next || aliases.includes(next)) {
-      setAliasDraft("");
-      return;
-    }
-    setAliases((curr) => [...curr, next]);
-    setAliasDraft("");
-  };
+function InlineAddRow({ onCreate }: InlineAddProps) {
+  const [term, setTerm] = useState("");
+  const [aliases, setAliases] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const removeAlias = (alias: string) => {
-    setAliases((curr) => curr.filter((a) => a !== alias));
-  };
-
-  const handleSave = async () => {
-    if (!canSave) return;
-    setSaving(true);
+  const handleSubmit = async () => {
+    if (!term.trim() || submitting) return;
+    setSubmitting(true);
     try {
-      if (isNew) {
-        const created = await commands.createVocabularyEntry({
-          term: term.trim(),
-          aliases,
-        });
-        onSaved(created);
-      } else if (entry) {
-        await commands.updateVocabularyEntry({
-          id: entry.id,
-          term: term.trim(),
-          aliases,
-        });
-        onSaved({ ...entry, term: term.trim(), aliases });
-      }
-    } catch (err) {
-      console.error("save vocabulary failed", err);
+      await onCreate(term, aliases);
+      setTerm("");
+      setAliases("");
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="hist-detail">
-      <EditorHeader
-        title={isNew ? "New term" : "Edit term"}
-        dirty={dirty}
-        isNew={isNew}
-        canDelete={!isNew && !!entry}
-        saving={saving}
-        canSave={canSave}
-        onCancel={onCancel}
-        onDelete={onDelete}
-        onSave={handleSave}
+    <div
+      className="grid items-center gap-3 px-4 py-2 border-b-[0.5px] border-hair"
+      style={{
+        gridTemplateColumns: "32px 1.2fr 2fr 100px",
+        background: "var(--color-amber-soft)",
+      }}
+    >
+      <IconPlus size={14} color="var(--color-amber-ink)" strokeWidth={1.8} />
+      <input
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+        placeholder="New term…"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSubmit();
+        }}
+        className="bg-transparent border-0 outline-none font-sf text-[13px] font-medium text-ink"
       />
-
-      <div className="hist-detail-scroll">
-        <div className="flex flex-col gap-5 max-w-[560px]">
-          <div className="flex flex-col gap-2">
-            <div>
-              <div className="text-body font-medium text-foreground">Term</div>
-              <div className="text-footnote text-muted-foreground leading-snug mt-1">
-                The canonical spelling. Whisper biases toward this; cleanup
-                replaces aliases with it.
-              </div>
-            </div>
-            <Input
-              value={term}
-              onChange={(e) => setTerm(e.target.value)}
-              placeholder="TypeScript"
-              autoFocus={isNew}
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <div>
-              <div className="text-body font-medium text-foreground">Aliases</div>
-              <div className="text-footnote text-muted-foreground leading-snug mt-1">
-                Spellings that should be replaced with the term above. Match is
-                case-insensitive at word boundaries.
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {aliases.map((a) => (
-                <span
-                  key={a}
-                  className="inline-flex items-center gap-1 rounded-md bg-[color:var(--color-elev)] px-2 h-7 text-caption text-foreground"
-                >
-                  <span>{a}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove alias ${a}`}
-                    onClick={() => removeAlias(a)}
-                    className="text-text-muted hover:text-foreground"
-                  >
-                    <X size={11} aria-hidden />
-                  </button>
-                </span>
-              ))}
-              <Input
-                value={aliasDraft}
-                onChange={(e) => setAliasDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    addAlias();
-                  } else if (
-                    e.key === "Backspace" &&
-                    aliasDraft === "" &&
-                    aliases.length > 0
-                  ) {
-                    setAliases((curr) => curr.slice(0, -1));
-                  }
-                }}
-                onBlur={addAlias}
-                placeholder={aliases.length === 0 ? "type script, typescript…" : "add alias…"}
-                className="h-7 w-[180px] text-caption"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+      <input
+        value={aliases}
+        onChange={(e) => setAliases(e.target.value)}
+        placeholder="aliases, comma-separated"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleSubmit();
+        }}
+        className="bg-transparent border-0 outline-none font-fl-mono text-[12px] text-ink-3"
+      />
+      <Btn
+        kind="primary"
+        size="sm"
+        disabled={!term.trim() || submitting}
+        onClick={handleSubmit}
+      >
+        Add ⏎
+      </Btn>
     </div>
   );
 }
 
-function SearchIcon() {
+interface RowProps {
+  entry: VocabularyEntry;
+  flashed: boolean;
+  onAliasesChange: (next: string[]) => void;
+  onDelete: () => void;
+}
+
+function VocabRow({ entry, flashed, onAliasesChange, onDelete }: RowProps) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const handleAdd = () => {
+    const next = draft.trim();
+    if (!next) {
+      setAdding(false);
+      return;
+    }
+    if (entry.aliases.includes(next)) {
+      setDraft("");
+      setAdding(false);
+      return;
+    }
+    onAliasesChange([...entry.aliases, next]);
+    setDraft("");
+    setAdding(false);
+  };
+
+  const handleRemove = (alias: string) => {
+    onAliasesChange(entry.aliases.filter((a) => a !== alias));
+  };
+
   return (
-    <svg
-      className="absolute left-1.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none"
-      viewBox="0 0 16 16"
-      width="11"
-      height="11"
-      aria-hidden="true"
+    <div
+      data-vocab-id={entry.id}
+      className={`grid items-center gap-3 px-4 py-2.5 border-b-[0.5px] border-hair group transition-colors ${
+        flashed ? "bg-selection-strong" : "hover:bg-fl-hover"
+      }`}
+      style={{ gridTemplateColumns: "32px 1.2fr 2fr 32px" }}
     >
-      <path
-        fill="currentColor"
-        d="M11.74 10.32a6 6 0 1 0-1.42 1.42l3.47 3.47a1 1 0 0 0 1.42-1.42l-3.47-3.47ZM3 7a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z"
-      />
-    </svg>
+      <IconGrip size={14} color="var(--color-ink-4)" />
+      <span className="text-[13px] font-medium text-ink truncate">
+        {entry.term}
+      </span>
+      <div className="flex flex-wrap gap-1">
+        {entry.aliases.map((a) => (
+          <span
+            key={a}
+            className="inline-flex items-center gap-1 bg-fill border-[0.5px] border-hair pl-[7px] pr-[4px] py-px rounded-[4px] font-fl-mono text-[11px] text-ink-2"
+          >
+            {a}
+            <button
+              type="button"
+              onClick={() => handleRemove(a)}
+              className="bg-transparent border-0 p-0 cursor-pointer text-ink-4 inline-flex hover:text-ink-2"
+              aria-label={`Remove ${a}`}
+            >
+              <IconX size={9} strokeWidth={1.8} />
+            </button>
+          </span>
+        ))}
+        {adding ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={handleAdd}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAdd();
+              if (e.key === "Escape") {
+                setDraft("");
+                setAdding(false);
+              }
+            }}
+            placeholder="alias"
+            className="bg-white border-[0.5px] border-amber-ink px-1.5 py-px rounded-[4px] font-fl-mono text-[11px] text-ink outline-none w-[120px]"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="bg-transparent border-[0.5px] border-dashed border-hair-strong px-1.5 py-px rounded-[4px] text-[11px] text-ink-3 cursor-pointer inline-flex items-center gap-[3px] hover:border-ink-3 hover:text-ink-2"
+          >
+            <IconPlus size={9} color="var(--color-ink-3)" strokeWidth={1.8} />
+            alias
+          </button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="opacity-0 group-hover:opacity-100 inline-flex items-center justify-center w-6 h-6 rounded-md text-ink-3 hover:text-red hover:bg-fl-hover transition-opacity"
+        aria-label={`Delete ${entry.term}`}
+      >
+        <IconTrash size={12} />
+      </button>
+    </div>
   );
 }

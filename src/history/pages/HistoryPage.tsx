@@ -1,18 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, type Dictation, type Profile } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
-import { HistoryListPane } from "../HistoryListPane";
+import {
+  HistoryListPane,
+  type ListMode,
+} from "../HistoryListPane";
 import { HistoryDetailPane } from "../HistoryDetailPane";
+import { HistorySidebar, type HistoryFilter } from "../HistorySidebar";
 import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
+import { Toolbar, SearchBox } from "../../components/atoms";
 
 type Props = {
   onAddedToVocab: (id: number) => void;
 };
 
+function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function applyFilter(items: Dictation[], filter: HistoryFilter): Dictation[] {
+  switch (filter.kind) {
+    case "all":
+      return items;
+    case "today": {
+      const t = startOfToday();
+      return items.filter((d) => d.created_at >= t);
+    }
+    case "starred":
+      return items.filter((d) => d.favorite);
+    case "profile":
+      return items.filter((d) => d.profile_id === filter.id);
+  }
+}
+
 export function HistoryPage({ onAddedToVocab }: Props) {
   const [dictations, setDictations] = useState<Dictation[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<HistoryFilter>({ kind: "all" });
+  const [mode, setMode] = useState<ListMode>("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [copyFlash, setCopyFlash] = useState(false);
@@ -20,9 +48,6 @@ export function HistoryPage({ onAddedToVocab }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Profile name lookup for the chip on each row + the detail meta line.
-  // Keyed by Profile.id; absent ids (deleted profiles, pre-v3 rows) just
-  // don't render a chip.
   const profileNames = useMemo(() => {
     const m = new Map<number, string>();
     for (const p of profiles) m.set(p.id, p.name);
@@ -49,7 +74,7 @@ export function HistoryPage({ onAddedToVocab }: Props) {
     dictationsRef.current = dictations;
   }, [dictations]);
 
-  // Refresh on filter changes (search debounced 180ms).
+  // Refresh on filter/search changes (search debounced 180ms).
   useEffect(() => {
     let cancelled = false;
     const id = window.setTimeout(async () => {
@@ -63,11 +88,6 @@ export function HistoryPage({ onAddedToVocab }: Props) {
         if (!cancelled) {
           setDictations(items);
           setIsLoading(false);
-          // Auto-select first if nothing selected or selection was filtered out.
-          setSelectedId((curr) => {
-            if (curr != null && items.some((d) => d.id === curr)) return curr;
-            return items[0]?.id ?? null;
-          });
         }
       } catch (err) {
         console.error("list_dictations failed", err);
@@ -87,10 +107,29 @@ export function HistoryPage({ onAddedToVocab }: Props) {
     setRefreshTick((n) => n + 1);
   });
 
+  // Sidebar/filter narrows the loaded list before it hits the list pane.
+  const filteredDictations = useMemo(
+    () => applyFilter(dictations, filter),
+    [dictations, filter],
+  );
+
+  // Keep selection valid against the *filtered* set; auto-select first
+  // when nothing was previously selected (or selection got filtered out).
+  useEffect(() => {
+    setSelectedId((curr) => {
+      if (curr != null && filteredDictations.some((d) => d.id === curr)) {
+        return curr;
+      }
+      return filteredDictations[0]?.id ?? null;
+    });
+  }, [filteredDictations]);
+
   const selected = useMemo(
     () =>
-      selectedId != null ? dictations.find((d) => d.id === selectedId) ?? null : null,
-    [dictations, selectedId],
+      selectedId != null
+        ? filteredDictations.find((d) => d.id === selectedId) ?? null
+        : null,
+    [filteredDictations, selectedId],
   );
   const selectedRef = useRef(selected);
   useEffect(() => {
@@ -98,7 +137,7 @@ export function HistoryPage({ onAddedToVocab }: Props) {
   }, [selected]);
 
   const moveSelection = useCallback((delta: number) => {
-    const list = dictationsRef.current;
+    const list = applyFilter(dictationsRef.current, filter);
     if (list.length === 0) return;
     setSelectedId((curr) => {
       const idx = curr != null ? list.findIndex((d) => d.id === curr) : -1;
@@ -110,7 +149,7 @@ export function HistoryPage({ onAddedToVocab }: Props) {
           : Math.max(0, Math.min(list.length - 1, idx + delta));
       return list[next].id;
     });
-  }, []);
+  }, [filter]);
 
   const handleFavorite = useCallback(async () => {
     const item = selectedRef.current;
@@ -158,16 +197,7 @@ export function HistoryPage({ onAddedToVocab }: Props) {
     setPendingDelete(null);
     try {
       await commands.deleteDictation(item.id);
-      setDictations((curr) => {
-        const next = curr.filter((d) => d.id !== item.id);
-        // Move selection to the next item, or the previous if this was last.
-        setSelectedId((sid) => {
-          if (sid !== item.id) return sid;
-          const idx = curr.findIndex((d) => d.id === item.id);
-          return next[idx]?.id ?? next[idx - 1]?.id ?? null;
-        });
-        return next;
-      });
+      setDictations((curr) => curr.filter((d) => d.id !== item.id));
     } catch (err) {
       console.error("delete_dictation failed", err);
     }
@@ -231,28 +261,55 @@ export function HistoryPage({ onAddedToVocab }: Props) {
     return () => window.removeEventListener("keydown", handler);
   }, [search, moveSelection, handlePaste, handleCopy, handleDeleteRequest]);
 
+  const totalLabel =
+    filteredDictations.length === 1
+      ? "1 item"
+      : `${filteredDictations.length.toLocaleString()} items`;
+
   return (
-    <div className="hist-twocol">
-      <HistoryListPane
-        dictations={dictations}
-        selectedId={selectedId}
-        search={search}
-        onSearchChange={setSearch}
-        onSelect={setSelectedId}
-        searchInputRef={searchInputRef}
-        isLoading={isLoading}
-        profileNames={profileNames}
+    <div className="flex flex-col h-full min-h-0">
+      <Toolbar
+        section="History"
+        center={
+          <SearchBox
+            ref={searchInputRef}
+            value={search}
+            onChange={setSearch}
+            placeholder="Search transcripts"
+            width={300}
+          />
+        }
       />
-      <HistoryDetailPane
-        dictation={selected}
-        onPaste={handlePaste}
-        onCopy={handleCopy}
-        onFavorite={handleFavorite}
-        onDelete={handleDeleteRequest}
-        copyFlash={copyFlash}
-        onAddedToVocab={onAddedToVocab}
-        profileNames={profileNames}
-      />
+
+      <div className="flex-1 flex min-h-0">
+        <HistorySidebar
+          dictations={dictations}
+          profiles={profiles}
+          filter={filter}
+          onFilterChange={setFilter}
+        />
+        <HistoryListPane
+          dictations={filteredDictations}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          isLoading={isLoading}
+          profiles={profiles}
+          profileNames={profileNames}
+          totalLabel={totalLabel}
+          mode={mode}
+          onModeChange={setMode}
+        />
+        <HistoryDetailPane
+          dictation={selected}
+          onPaste={handlePaste}
+          onCopy={handleCopy}
+          onFavorite={handleFavorite}
+          onDelete={handleDeleteRequest}
+          copyFlash={copyFlash}
+          onAddedToVocab={onAddedToVocab}
+          profileNames={profileNames}
+        />
+      </div>
 
       <ConfirmDeleteDialog
         open={pendingDelete !== null}

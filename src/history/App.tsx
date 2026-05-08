@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTauriEvent, useThemeFromSettings } from "../lib/hooks";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { IconRail, type Section } from "./IconRail";
@@ -16,6 +16,31 @@ export function App() {
   // The popover "Settings" entry asks the history window to jump straight
   // to the Settings section.
   useTauriEvent<unknown>("show-settings", () => setSection("settings"));
+
+  // Window-level shortcuts: ⌘1/⌘2/⌘3 jump between rail sections, ⌘,
+  // opens Settings (which is hidden from the rail per the design but
+  // still lives in the same window).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.shiftKey || e.altKey) return;
+      const next: Record<string, Section> = {
+        "1": "history",
+        "2": "profiles",
+        "3": "vocabulary",
+        ",": "settings",
+      };
+      const target = next[e.key];
+      if (!target) return;
+      // Don't hijack ⌘1/⌘, when typing in an input.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      setSection(target);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Selecting "Add to vocabulary" in the History detail pane should both
   // create the entry AND drop the user into Vocabulary with the new term

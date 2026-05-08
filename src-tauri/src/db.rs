@@ -33,6 +33,12 @@ pub struct Profile {
     pub style_prompt: String,
     pub vocabulary: String,
     pub created_at: i64,
+    /// macOS bundle IDs (e.g. `com.apple.mail`) where this profile should
+    /// auto-activate when the user holds the dictation hotkey. Empty list
+    /// means no app binding — the profile only activates when explicitly
+    /// chosen as the active profile.
+    #[serde(default)]
+    pub app_bindings: Vec<String>,
     /// Stable identity for vault sync. Always populated post-migration v2.
     /// Skipped from JSON because the frontend keys off `id` only.
     #[serde(skip)]
@@ -221,7 +227,7 @@ impl Db {
     pub fn list_profiles(&self) -> Result<Vec<Profile>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid
+            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid, app_bindings
              FROM profiles ORDER BY id",
         )?;
         let rows = stmt.query_map([], row_to_profile)?;
@@ -235,7 +241,7 @@ impl Db {
     pub fn get_profile(&self, id: i64) -> Result<Option<Profile>> {
         let conn = self.conn.lock();
         match conn.query_row(
-            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid
+            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid, app_bindings
              FROM profiles WHERE id = ?1",
             params![id],
             row_to_profile,
@@ -252,6 +258,7 @@ impl Db {
         description: &str,
         style_prompt: &str,
         vocabulary: &str,
+        app_bindings: &[String],
     ) -> Result<Profile> {
         self.create_profile_with_ulid(
             &ulid::Ulid::new().to_string(),
@@ -259,6 +266,7 @@ impl Db {
             description,
             style_prompt,
             vocabulary,
+            app_bindings,
             now_ms(),
         )
     }
@@ -273,13 +281,15 @@ impl Db {
         description: &str,
         style_prompt: &str,
         vocabulary: &str,
+        app_bindings: &[String],
         created_at: i64,
     ) -> Result<Profile> {
+        let bindings_json = serde_json::to_string(app_bindings)?;
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO profiles (name, description, style_prompt, vocabulary, created_at, ulid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![name, description, style_prompt, vocabulary, created_at, ulid],
+            "INSERT INTO profiles (name, description, style_prompt, vocabulary, created_at, ulid, app_bindings)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![name, description, style_prompt, vocabulary, created_at, ulid, bindings_json],
         )?;
         let id = conn.last_insert_rowid();
         Ok(Profile {
@@ -289,6 +299,7 @@ impl Db {
             style_prompt: style_prompt.to_string(),
             vocabulary: vocabulary.to_string(),
             created_at,
+            app_bindings: app_bindings.to_vec(),
             ulid: ulid.to_string(),
         })
     }
@@ -300,13 +311,15 @@ impl Db {
         description: &str,
         style_prompt: &str,
         vocabulary: &str,
+        app_bindings: &[String],
     ) -> Result<()> {
+        let bindings_json = serde_json::to_string(app_bindings)?;
         let conn = self.conn.lock();
         conn.execute(
             "UPDATE profiles
-             SET name = ?2, description = ?3, style_prompt = ?4, vocabulary = ?5
+             SET name = ?2, description = ?3, style_prompt = ?4, vocabulary = ?5, app_bindings = ?6
              WHERE id = ?1",
-            params![id, name, description, style_prompt, vocabulary],
+            params![id, name, description, style_prompt, vocabulary, bindings_json],
         )?;
         Ok(())
     }
@@ -320,7 +333,7 @@ impl Db {
     pub fn find_profile_by_ulid(&self, ulid: &str) -> Result<Option<Profile>> {
         let conn = self.conn.lock();
         match conn.query_row(
-            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid
+            "SELECT id, name, description, style_prompt, vocabulary, created_at, ulid, app_bindings
              FROM profiles WHERE ulid = ?1",
             params![ulid],
             row_to_profile,
@@ -339,6 +352,9 @@ impl Db {
         style_prompt: &str,
         vocabulary: &str,
     ) -> Result<()> {
+        // Note: vault syncs don't currently propagate app_bindings — they're
+        // a pure local concern. If the vault format gains an apps field
+        // later, thread it through here.
         let conn = self.conn.lock();
         conn.execute(
             "UPDATE profiles
@@ -485,6 +501,11 @@ fn row_to_dictation(row: &rusqlite::Row) -> rusqlite::Result<Dictation> {
 }
 
 fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
+    let bindings_json: Option<String> = row.get(7).ok();
+    let app_bindings = bindings_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default();
     Ok(Profile {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -493,6 +514,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         vocabulary: row.get(4)?,
         created_at: row.get(5)?,
         ulid: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        app_bindings,
     })
 }
 
@@ -541,7 +563,8 @@ CREATE TABLE IF NOT EXISTS profiles (
     style_prompt TEXT NOT NULL DEFAULT '',
     vocabulary TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
-    ulid TEXT
+    ulid TEXT,
+    app_bindings TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS vocabulary_entries (
@@ -627,6 +650,17 @@ fn migrate(conn: &Connection) -> Result<()> {
              REFERENCES profiles(id) ON DELETE SET NULL;",
         );
         conn.execute_batch("PRAGMA user_version = 3;")?;
+    }
+
+    if version < 4 {
+        // Per-profile app bindings — array of macOS bundle IDs. Stored as
+        // a JSON string so we don't need a join table for what is in
+        // practice a tiny set per profile. Wrapped because the column
+        // already exists on fresh installs.
+        let _ = conn.execute_batch(
+            "ALTER TABLE profiles ADD COLUMN app_bindings TEXT NOT NULL DEFAULT '[]';",
+        );
+        conn.execute_batch("PRAGMA user_version = 4;")?;
     }
 
     Ok(())
