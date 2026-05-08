@@ -54,7 +54,7 @@ export interface VocabularyEntry {
   created_at: number;
 }
 
-export interface UpdateStatus {
+interface UpdateStatus {
   up_to_date: boolean;
   latest_version: string;
 }
@@ -116,14 +116,14 @@ export interface VaultStatus {
   vocab_count: number;
 }
 
-export interface ListDictationsArgs {
+interface ListDictationsArgs {
   limit?: number;
   offset?: number;
   favoritesOnly?: boolean;
   search?: string | null;
 }
 
-export type PrivacyPanel = "microphone" | "accessibility";
+type PrivacyPanel = "microphone" | "accessibility";
 
 export const commands = {
   // Dictations / popover

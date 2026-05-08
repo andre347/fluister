@@ -1,17 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
+import { X } from "lucide-react";
 import { commands, type VocabularyEntry } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
-import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "../../components/ui/dialog";
+import { ConfirmDeleteDialog } from "../ConfirmDeleteDialog";
+import { EditorHeader } from "../EditorHeader";
+import { EmptyDetail } from "../EmptyDetail";
+import { NewItemToolbar } from "../NewItemToolbar";
 import { cn } from "../../lib/utils";
 
 const NEW_KEY = "__new__";
@@ -101,18 +96,11 @@ export function VocabularyPage({
   return (
     <div className="hist-twocol">
       <div className="hist-list-pane">
-        <div className="hist-list-toolbar">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="w-full justify-start gap-2 h-8 text-item"
-            onClick={() => setSelection(NEW_KEY)}
-            aria-pressed={selection === NEW_KEY}
-          >
-            <Plus size={13} aria-hidden />
-            <span>New term</span>
-          </Button>
-        </div>
+        <NewItemToolbar
+          label="New term"
+          selected={selection === NEW_KEY}
+          onSelect={() => setSelection(NEW_KEY)}
+        />
         <div className="hist-list-search">
           <SearchIcon />
           <Input
@@ -165,9 +153,7 @@ export function VocabularyPage({
       </div>
 
       {selection === null ? (
-        <div className="hist-detail-empty">
-          <span>Select a term to edit, or create a new one.</span>
-        </div>
+        <EmptyDetail label="Select a term to edit, or create a new one." />
       ) : selection === NEW_KEY ? (
         <VocabularyEditor
           key="new"
@@ -189,32 +175,18 @@ export function VocabularyPage({
           onSaved={() => setRefreshTick((n) => n + 1)}
         />
       ) : (
-        <div className="hist-detail-empty">
-          <span>Term not found.</span>
-        </div>
+        <EmptyDetail label="Term not found." />
       )}
 
-      <Dialog
+      <ConfirmDeleteDialog
         open={pendingDelete !== null}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete term?</DialogTitle>
-            <DialogDescription>
-              {pendingDelete ? `“${pendingDelete.term}” will be removed.` : ""}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeleteConfirm}>
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title="Delete term?"
+        description={
+          pendingDelete ? `“${pendingDelete.term}” will be removed.` : ""
+        }
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }
@@ -284,37 +256,17 @@ function VocabularyEditor({
 
   return (
     <div className="hist-detail">
-      <div className="hist-detail-header">
-        <div className="text-tag font-medium uppercase tracking-wider text-faint">
-          {isNew ? "New term" : "Edit term"}
-          {dirty && !isNew && (
-            <span className="ml-2 normal-case text-text-muted tracking-normal">
-              · Unsaved
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {isNew && onCancel && (
-            <Button variant="ghost" size="sm" onClick={onCancel} className="h-8">
-              Cancel
-            </Button>
-          )}
-          {!isNew && entry && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              title="Delete"
-              className="h-8 w-9 px-0 text-text-muted hover:text-[color:var(--color-danger)]"
-            >
-              <Trash2 size={14} aria-hidden />
-            </Button>
-          )}
-          <Button onClick={handleSave} disabled={!canSave} size="sm" className="h-8">
-            {saving ? "Saving…" : isNew ? "Create" : "Save"}
-          </Button>
-        </div>
-      </div>
+      <EditorHeader
+        title={isNew ? "New term" : "Edit term"}
+        dirty={dirty}
+        isNew={isNew}
+        canDelete={!isNew && !!entry}
+        saving={saving}
+        canSave={canSave}
+        onCancel={onCancel}
+        onDelete={onDelete}
+        onSave={handleSave}
+      />
 
       <div className="hist-detail-scroll">
         <div className="flex flex-col gap-5 max-w-[560px]">
