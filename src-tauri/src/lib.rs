@@ -5,13 +5,11 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{
-    tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State, WindowEvent,
+    menu::{CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
+    tray::{TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Listener, Manager, State, WindowEvent,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
-
-#[cfg(target_os = "macos")]
-use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
 
 mod apps;
 mod audio;
@@ -406,54 +404,6 @@ fn hide_history(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("history") {
         let _ = window.hide();
     }
-}
-
-fn hide_popover(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("popover") {
-        let _ = window.hide();
-    }
-}
-
-/// Anchors the popover under the tray icon and shows it. The icon's screen
-/// rect comes from the tray-click event, converted to physical pixels.
-fn show_popover_at_tray(app: &AppHandle, rect: tauri::Rect) {
-    let Some(window) = app.get_webview_window("popover") else {
-        return;
-    };
-
-    // The active monitor for clamping. current_monitor() returns the monitor
-    // the window currently sits on; while it's hidden that may be stale, so
-    // we fall back to the primary.
-    let monitor = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| app.primary_monitor().ok().flatten());
-    let scale = monitor.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
-
-    let icon_pos = rect.position.to_physical::<f64>(scale);
-    let icon_size = rect.size.to_physical::<f64>(scale);
-    let win_size = window
-        .outer_size()
-        .map(|s| (s.width as f64, s.height as f64))
-        .unwrap_or((320.0 * scale, 420.0 * scale));
-
-    let mut x = icon_pos.x + icon_size.width / 2.0 - win_size.0 / 2.0;
-    let y = icon_pos.y + icon_size.height + 4.0 * scale;
-
-    if let Some(monitor) = monitor.as_ref() {
-        let mon_pos = monitor.position();
-        let mon_size = monitor.size();
-        let min_x = mon_pos.x as f64 + 8.0 * scale;
-        let max_x = (mon_pos.x as f64 + mon_size.width as f64) - win_size.0 - 8.0 * scale;
-        if max_x > min_x {
-            x = x.clamp(min_x, max_x);
-        }
-    }
-
-    let _ = window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
-    let _ = window.show();
-    let _ = window.set_focus();
 }
 
 fn position_overlay(app: &AppHandle) {
@@ -893,54 +843,11 @@ fn copy_dictation(
         .map_err(|e| e.to_string())
 }
 
-// ─── Popover navigation commands ─────────────────────────────────────────────
-
-#[tauri::command]
-fn open_history(app: AppHandle) {
-    hide_popover(&app);
-    show_history(&app);
-}
-
-#[tauri::command]
-fn open_settings_from_popover(app: AppHandle) {
-    hide_popover(&app);
-    show_history(&app);
-    // The history window listens for this and switches to its settings panel.
-    let _ = app.emit("show-settings", ());
-}
-
-#[tauri::command]
-fn quit_app(app: AppHandle) {
-    app.exit(0);
-}
-
-#[tauri::command]
-fn close_popover(app: AppHandle) {
-    hide_popover(&app);
-}
-
+/// Read the package version from CARGO_PKG_VERSION at compile time.
+/// Used by Settings → About; nothing else surfaces it currently.
 #[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
-}
-
-/// Stub for the "Check for updates" entry in the popover. Wires up later to
-/// a real update endpoint (Tauri's updater plugin or a custom JSON manifest).
-#[tauri::command]
-async fn check_for_updates() -> Result<UpdateStatus, String> {
-    // Simulate a quick network round-trip so the UI gets to show the
-    // "checking" state. Replace with a real call when ready.
-    tokio::time::sleep(Duration::from_millis(700)).await;
-    Ok(UpdateStatus {
-        up_to_date: true,
-        latest_version: env!("CARGO_PKG_VERSION").to_string(),
-    })
-}
-
-#[derive(Clone, Serialize)]
-struct UpdateStatus {
-    up_to_date: bool,
-    latest_version: String,
 }
 
 // ─── Model management ────────────────────────────────────────────────────────
@@ -1389,13 +1296,25 @@ fn set_active_profile(
     state: State<'_, AppState>,
     id: Option<i64>,
 ) -> Result<(), String> {
+    apply_active_profile_change(&app, &state, id).map_err(|e| e.to_string())
+}
+
+/// Inner setter shared by the JS-invoked command and the tray-menu
+/// "Profile" submenu. Lifts the lock + settings save + vault meta sync +
+/// `profiles-changed` emit out of the #[command] wrapper so the menu
+/// handler can call it without manufacturing a State guard.
+fn apply_active_profile_change(
+    app: &AppHandle,
+    state: &AppState,
+    id: Option<i64>,
+) -> anyhow::Result<()> {
     {
         let mut current = state.settings.lock();
         current.active_profile_id = id;
-        save_settings(&state.db, &current).map_err(|e| e.to_string())?;
+        save_settings(&state.db, &current)?;
     }
-    if let Some(root) = vault_root(&state) {
-        if let Err(e) = vault_write_meta(&state, &root) {
+    if let Some(root) = vault_root(state) {
+        if let Err(e) = vault_write_meta(state, &root) {
             log::warn!("vault meta refresh failed: {e}");
         }
     }
@@ -1516,6 +1435,234 @@ async fn cleanup_preview(
 
 // ─── Tray icon ───────────────────────────────────────────────────────────────
 
+/// Maximum number of dictations shown in the tray menu's "Recent dictations"
+/// submenu. macOS HIG suggests menus shouldn't grow unbounded, and the
+/// History window is the right home for browsing the full list.
+const MAX_RECENT_IN_TRAY: i64 = 5;
+
+const TRAY_ID: &str = "main-tray";
+
+/// Build a fresh native tray menu. On macOS the resulting `Menu` is
+/// rendered by AppKit as a real `NSMenu` — fonts, dark-mode, accelerator
+/// alignment, blur, animations all come from the system. Tauri only
+/// supplies the structure.
+fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let profile_submenu = build_profiles_submenu(app)?;
+    let recent_submenu = build_recent_submenu(app)?;
+
+    let open_history = MenuItemBuilder::with_id("open-history", "Open History")
+        .accelerator("CmdOrCtrl+Shift+H")
+        .build(app)?;
+    let open_settings = MenuItemBuilder::with_id("open-settings", "Settings…")
+        .accelerator("CmdOrCtrl+,")
+        .build(app)?;
+    // Plain MenuItem instead of PredefinedMenuItem::quit — the predefined
+    // item ships with a leading glyph in some macOS states that we want
+    // gone. We handle the click manually via app.exit(0), which is the
+    // same end result as NSApp.terminate: for our purposes (no
+    // ApplicationShouldTerminate hooks to honor).
+    let quit = MenuItemBuilder::with_id("quit", "Quit Fluister")
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
+
+    MenuBuilder::new(app)
+        .item(&profile_submenu)
+        .item(&recent_submenu)
+        .separator()
+        .item(&open_history)
+        .item(&open_settings)
+        .separator()
+        .item(&quit)
+        .build()
+}
+
+/// Build the "Profile" submenu — one CheckMenuItem per profile, with the
+/// currently-active profile checkmarked. Click → set as active. Mirrors
+/// the active-profile resolution used by the dictation pipeline so the
+/// "Default" fallback is reflected when no explicit active id is set.
+fn build_profiles_submenu(app: &AppHandle) -> tauri::Result<tauri::menu::Submenu<tauri::Wry>> {
+    let (profiles, active_id) = match app.try_state::<AppState>() {
+        Some(state) => {
+            let profiles = state.db.list_profiles().unwrap_or_default();
+            let active_id = state.settings.lock().active_profile_id;
+            (profiles, active_id)
+        }
+        None => (Vec::new(), None),
+    };
+
+    // Effective active id mirrors `resolve_active_profile`: if the
+    // saved id is missing or stale, fall back to the seeded "Default".
+    let effective = match active_id {
+        Some(id) if profiles.iter().any(|p| p.id == id) => Some(id),
+        _ => profiles
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case("Default"))
+            .map(|p| p.id),
+    };
+
+    let mut builder = SubmenuBuilder::new(app, "Profile");
+
+    if profiles.is_empty() {
+        let empty = MenuItemBuilder::with_id("profile:empty", "No profiles")
+            .enabled(false)
+            .build(app)?;
+        builder = builder.item(&empty);
+    } else {
+        for p in &profiles {
+            let item = CheckMenuItemBuilder::with_id(format!("profile:{}", p.id), &p.name)
+                .checked(effective == Some(p.id))
+                .build(app)?;
+            builder = builder.item(&item);
+        }
+    }
+
+    builder.build()
+}
+
+fn build_recent_submenu(app: &AppHandle) -> tauri::Result<tauri::menu::Submenu<tauri::Wry>> {
+    let dictations = app
+        .try_state::<AppState>()
+        .and_then(|s| s.db.list(MAX_RECENT_IN_TRAY, 0, false, None).ok())
+        .unwrap_or_default();
+
+    let mut builder = SubmenuBuilder::new(app, "Recent dictations");
+
+    if dictations.is_empty() {
+        let empty = MenuItemBuilder::with_id("recent:empty", "No recent dictations")
+            .enabled(false)
+            .build(app)?;
+        builder = builder.item(&empty);
+    } else {
+        for d in &dictations {
+            let label = truncate_for_menu(&d.cleaned_text, 50);
+            let item = MenuItemBuilder::with_id(format!("recent:{}", d.id), label)
+                .build(app)?;
+            builder = builder.item(&item);
+        }
+    }
+
+    builder.build()
+}
+
+/// Trim a dictation's cleaned text to fit a single menu row. Cuts at word
+/// boundaries when possible and ellipsizes the rest. Newlines collapse to
+/// spaces — NSMenu items don't wrap.
+fn truncate_for_menu(text: &str, max: usize) -> String {
+    let flat: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let mut out: String = flat.chars().take(max).collect();
+    if let Some(idx) = out.rfind(' ') {
+        if idx > max / 2 {
+            out.truncate(idx);
+        }
+    }
+    format!("{out}…")
+}
+
+/// Rebuild + reattach the tray menu. Called once at startup and on the
+/// `history-changed` / `profiles-changed` events so the "Recent" submenu
+/// stays fresh without needing to intercept menu-open at the system level
+/// (which Tauri's API doesn't expose).
+fn refresh_tray_menu(app: &AppHandle) {
+    match build_tray_menu(app) {
+        Ok(menu) => {
+            if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                if let Err(e) = tray.set_menu(Some(menu)) {
+                    log::warn!("set_menu failed: {e}");
+                }
+            }
+        }
+        Err(e) => log::warn!("build_tray_menu failed: {e}"),
+    }
+}
+
+/// Dispatch a menu click to the appropriate handler. Item IDs follow
+/// stable conventions:
+///   - `recent:<i64>` — paste a past dictation
+///   - `profile:<i64>` — set the active profile
+///   - `open-history` / `open-settings` / `quit` — global actions
+fn handle_menu_event(app: &AppHandle, id: &str) {
+    if let Some(rest) = id.strip_prefix("recent:") {
+        if rest == "empty" {
+            return;
+        }
+        if let Ok(dict_id) = rest.parse::<i64>() {
+            paste_recent_from_tray(app.clone(), dict_id);
+        }
+        return;
+    }
+    if let Some(rest) = id.strip_prefix("profile:") {
+        if rest == "empty" {
+            return;
+        }
+        if let Ok(profile_id) = rest.parse::<i64>() {
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Err(e) = apply_active_profile_change(app, &state, Some(profile_id)) {
+                    log::warn!("tray profile switch failed: {e}");
+                }
+            }
+        }
+        return;
+    }
+    match id {
+        "open-history" => show_history(app),
+        "open-settings" => {
+            show_history(app);
+            // Same hand-off the popover used: history listens for this
+            // event and switches to the Settings section.
+            let _ = app.emit("show-settings", ());
+        }
+        "quit" => app.exit(0),
+        _ => {}
+    }
+}
+
+/// Mirror what the existing `paste_dictation` Tauri command does, but
+/// from the tray-menu thread instead of an invoke. Clipboard staging +
+/// previously-frontmost activation + ⌘V keystroke.
+fn paste_recent_from_tray(app: AppHandle, id: i64) {
+    let (text, target) = {
+        let state: tauri::State<AppState> = app.state();
+        let dict = match state.db.get(id) {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                log::warn!("tray paste: dictation {id} not found");
+                return;
+            }
+            Err(e) => {
+                log::warn!("tray paste: db lookup {id} failed: {e}");
+                return;
+            }
+        };
+        let target = state.last_external_app.lock().clone();
+        (dict.cleaned_text, target)
+    };
+
+    if let Err(e) = app.clipboard().write_text(text) {
+        log::warn!("tray paste: clipboard write failed: {e}");
+        return;
+    }
+
+    if let Some(t) = &target {
+        frontmost::activate(t.pid);
+    }
+
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Wait for the activation to settle before sending the keystroke.
+        // Mirrors the delay used in the existing paste_dictation command.
+        tokio::time::sleep(Duration::from_millis(140)).await;
+        if let Err(e) = paste::synthesize_keystroke(&app2).await {
+            log::warn!("tray paste: keystroke failed: {e}");
+        }
+    });
+}
+
 fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     // Custom monochrome tray glyph — a 5-bar waveform that matches the
     // dictation overlay. Loaded as a "template image" so macOS auto-tints
@@ -1523,34 +1670,26 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
     let icon = tauri::image::Image::from_bytes(tray_icon_bytes)?;
 
-    // No system menu — both left- and right-clicks open the same popover,
-    // matching Granola / Spotify / Linear menubar behaviour. The popover
-    // itself contains "Open History", "Settings" and "Quit".
-    let _tray = TrayIconBuilder::new()
+    let menu = build_tray_menu(&app.handle().clone())?;
+
+    // Native NSMenu attached to the tray. Tauri auto-handles left/right
+    // click to show it — we keep `on_tray_icon_event` only to capture the
+    // previously-frontmost app *before* fluister becomes active, so the
+    // "Recent dictation → paste" path knows where to paste back to.
+    let _tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .icon_as_template(true)
+        .menu(&menu)
         .on_tray_icon_event(|tray, event| {
-            let TrayIconEvent::Click {
-                button_state: MouseButtonState::Up,
-                rect,
-                ..
-            } = event
-            else {
-                return;
-            };
-
-            let app = tray.app_handle();
-            if let Some(s) = app.try_state::<AppState>() {
-                capture_target_app(&s);
-            }
-            if let Some(window) = app.get_webview_window("popover") {
-                let visible = window.is_visible().unwrap_or(false);
-                if visible {
-                    let _ = window.hide();
-                } else {
-                    show_popover_at_tray(app, rect);
+            if let TrayIconEvent::Click { .. } = event {
+                let app = tray.app_handle();
+                if let Some(s) = app.try_state::<AppState>() {
+                    capture_target_app(&s);
                 }
             }
+        })
+        .on_menu_event(|app, event| {
+            handle_menu_event(app, event.id().as_ref());
         })
         .build(app)?;
 
@@ -1601,16 +1740,11 @@ pub fn run() {
             paste_dictation,
             get_settings,
             update_settings,
-            open_history,
-            open_settings_from_popover,
-            quit_app,
-            close_popover,
             list_whisper_models,
             download_whisper_model,
             set_active_whisper_model,
             list_ollama_models,
             app_version,
-            check_for_updates,
             onboarding_status,
             request_microphone_access,
             open_privacy_panel,
@@ -1641,16 +1775,6 @@ pub fn run() {
                     api.prevent_close();
                 }
             }
-            "popover" => {
-                // Click outside → lose focus → hide. Same UX as a real menu.
-                if let WindowEvent::Focused(false) = event {
-                    let _ = window.hide();
-                }
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    let _ = window.hide();
-                    api.prevent_close();
-                }
-            }
             _ => {}
         })
         .setup(move |app| {
@@ -1664,6 +1788,23 @@ pub fn run() {
             );
 
             setup_tray(app)?;
+
+            // Refresh the tray's "Recent dictations" submenu whenever a
+            // new dictation lands or profiles change. Tauri's tray-menu
+            // API doesn't expose a "menu about to open" hook, so the
+            // alternative is keeping it eventually-consistent: the menu
+            // is always at most one event behind, which is fine because
+            // dictations are user-initiated and far apart.
+            {
+                let app_for_history = app.handle().clone();
+                app.handle().listen("history-changed", move |_| {
+                    refresh_tray_menu(&app_for_history);
+                });
+                let app_for_profiles = app.handle().clone();
+                app.handle().listen("profiles-changed", move |_| {
+                    refresh_tray_menu(&app_for_profiles);
+                });
+            }
 
             // If the user already has a vault configured, start watching it
             // now. Boot already ran the merge-both-ways reconcile above; the
@@ -1682,22 +1823,6 @@ pub fn run() {
                             path.display()
                         ),
                     }
-                }
-            }
-
-            // Apply native NSVisualEffectView frosted-glass to the popover.
-            // CSS backdrop-filter sampled the desktop too literally and leaked
-            // color from saturated wallpapers; HudWindow gives the proper
-            // macOS-native dropdown appearance instead.
-            #[cfg(target_os = "macos")]
-            if let Some(popover) = app.get_webview_window("popover") {
-                if let Err(err) = apply_vibrancy(
-                    &popover,
-                    NSVisualEffectMaterial::HudWindow,
-                    None,
-                    Some(12.0),
-                ) {
-                    log::warn!("apply_vibrancy(popover) failed: {err:?}");
                 }
             }
 

@@ -45,22 +45,20 @@ notify = "6"
 # whisper-rs builds whisper.cpp through cmake + clang.
 # Metal is enabled on macOS for Apple Silicon GPU acceleration.
 # core-graphics + core-foundation power the Right-Option global hotkey via CGEventTap.
-# objc2-app-kit drives frontmost-app tracking + activation for re-paste from history.
-# window-vibrancy gives the popover a real NSVisualEffectView frosted-glass
-# backdrop instead of the CSS backdrop-filter approximation, which leaks color
-# from saturated wallpapers.
+# objc2 drives frontmost-app tracking + activation for re-paste from history,
+# and the /Applications enumeration in apps.rs.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.13", features = ["metal"] }
 core-graphics = "0.24"
 core-foundation = "0.10"
 objc2 = "0.5"
-window-vibrancy = "0.7"
 
 [profile.release]
 opt-level = 3
-# `lto = true` (fat LTO) collides with window-vibrancy's NSVisualEffectViewTagged
-# ObjC subclass declaration — the class symbol ends up in two CGUs and the linker
-# rejects the duplicate. Disable LTO to keep the build linkable.
+# Historically disabled because window-vibrancy's NSVisualEffectViewTagged
+# subclass collided with fat-LTO. The dep is gone now (the popover was
+# replaced by a native NSMenu) so this could be re-enabled — leaving as
+# `false` for now to keep the deploy profile change to its own PR.
 lto = false
 codegen-units = 1
 strip = true

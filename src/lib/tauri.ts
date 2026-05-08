@@ -63,11 +63,6 @@ export interface VocabularyEntry {
   created_at: number;
 }
 
-interface UpdateStatus {
-  up_to_date: boolean;
-  latest_version: string;
-}
-
 export type MicStatus =
   | "not-determined"
   | "restricted"
@@ -135,16 +130,13 @@ interface ListDictationsArgs {
 type PrivacyPanel = "microphone" | "accessibility";
 
 export const commands = {
-  // Dictations / popover
+  // Dictations
   listDictations: (args: ListDictationsArgs) =>
     invoke<Dictation[]>("list_dictations", args as Record<string, unknown>),
   copyDictation: (id: number) => invoke<void>("copy_dictation", { id }),
-  openHistory: () => invoke<void>("open_history"),
-  openSettingsFromPopover: () => invoke<void>("open_settings_from_popover"),
-  closePopover: () => invoke<void>("close_popover"),
-  quitApp: () => invoke<void>("quit_app"),
+
+  // App
   appVersion: () => invoke<string>("app_version"),
-  checkForUpdates: () => invoke<UpdateStatus>("check_for_updates"),
 
   // Settings
   getSettings: () => invoke<Settings>("get_settings"),

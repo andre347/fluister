@@ -63,22 +63,6 @@
         "visible": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
-      },
-      {
-        "label": "popover",
-        "title": "Fluister",
-        "url": "popover.html",
-        "width": 320,
-        "height": 420,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visible": false,
-        "focus": false,
-        "acceptFirstMouse": true,
-        "shadow": true
       }
     ],
     "security": {

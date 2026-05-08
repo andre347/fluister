@@ -20,7 +20,6 @@ export default defineConfig(async () => ({
       input: {
         main: "index.html",
         history: "history.html",
-        popover: "popover.html",
         onboarding: "onboarding.html",
       },
     },
