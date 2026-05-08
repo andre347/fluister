@@ -1724,6 +1724,25 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Dock-icon click on macOS: NSApplication fires
+            // applicationShouldHandleReopen, which Tauri surfaces as
+            // RunEvent::Reopen. Without a handler nothing happens, so the
+            // user clicks the dock icon and the app stays silent. Treat
+            // every reopen as "bring the main window forward" — show the
+            // history window whether or not anything else is visible.
+            // The overlay/popover are transient; they shouldn't be the
+            // window that comes to the front when the user clicks the
+            // dock.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_history(app);
+            }
+            // Suppress the unused-variable lint on non-macOS builds. The
+            // reopen handler is the only event we currently observe.
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
