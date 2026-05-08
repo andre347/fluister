@@ -190,7 +190,7 @@ pub fn list_profiles(root: &Path) -> Result<Vec<(PathBuf, VaultProfile)>> {
             Err(err) => log::warn!("skipping malformed profile {}: {err}", path.display()),
         }
     }
-    out.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()));
+    out.sort_by_key(|(_, p)| p.name.to_lowercase());
     Ok(out)
 }
 
