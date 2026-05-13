@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
+# Sidecar spawn + child-process management for the bundled llama-server.
+tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
@@ -52,6 +54,15 @@ whisper-rs = { version = "0.13", features = ["metal"] }
 core-graphics = "0.24"
 core-foundation = "0.10"
 objc2 = "0.5"
+# SIGTERM to the llama-server sidecar during graceful shutdown — CommandChild
+# only exposes SIGKILL, so we send the polite signal ourselves.
+libc = "0.2"
+
+[lints.clippy]
+# Tauri command handlers naturally collect many parameters (AppHandle, State,
+# every form field). Splitting them into a struct adds plumbing without
+# improving readability for one-shot RPC handlers.
+too_many_arguments = "allow"
 
 [profile.release]
 opt-level = 3

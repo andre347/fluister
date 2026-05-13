@@ -4,17 +4,20 @@ import {
   ArrowRight,
   Check,
   ChevronLeft,
-  ExternalLink,
   FolderOpen,
   HardDrive,
+  Sparkles,
 } from "lucide-react";
 import {
   commands,
   type DownloadProgress,
+  type LlmDownloadDone,
+  type LlmDownloadFailed,
+  type LlmDownloadProgress,
+  type LlmModelInfo,
   type ModelDownloadDone,
   type ModelDownloadFailed,
   type ModelInfo,
-  type OllamaModel,
   type OnboardingStatus,
   type VaultStatus,
 } from "../lib/tauri";
@@ -71,8 +74,11 @@ export function App() {
   const [downloadPct, setDownloadPct] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
   const [micRequesting, setMicRequesting] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-  const [ollamaSkipped, setOllamaSkipped] = useState(false);
+  const [llmModels, setLlmModels] = useState<LlmModelInfo[]>([]);
+  const [llmDownloadingId, setLlmDownloadingId] = useState<string | null>(null);
+  const [llmDownloadPct, setLlmDownloadPct] = useState(0);
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [llmSkipped, setLlmSkipped] = useState(false);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [vaultDefault, setVaultDefault] = useState<string | null>(null);
   const [vaultBusy, setVaultBusy] = useState(false);
@@ -128,17 +134,17 @@ export function App() {
     };
   }, []);
 
-  // Load local Ollama model list when entering step 3 + on focus there.
+  // Load the bundled LLM catalog when entering the cleanup step.
   useEffect(() => {
     if (step !== 2) return;
     let cancelled = false;
     commands
-      .listOllamaModels()
+      .listLlmModels()
       .then((m) => {
-        if (!cancelled) setOllamaModels(m);
+        if (!cancelled) setLlmModels(m);
       })
       .catch(() => {
-        if (!cancelled) setOllamaModels([]);
+        if (!cancelled) setLlmModels([]);
       });
     return () => {
       cancelled = true;
@@ -175,6 +181,45 @@ export function App() {
     setDownloadingFile(null);
     setDownloadPct(0);
     console.error("download failed", e.payload.error);
+    setRefreshTick((n) => n + 1);
+  });
+
+  // ─── Bundled LLM (cleanup model) download lifecycle ─────────────────────
+
+  const llmDownloadingIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    llmDownloadingIdRef.current = llmDownloadingId;
+  }, [llmDownloadingId]);
+
+  useTauriEvent<LlmDownloadProgress>("llm-download-progress", (e) => {
+    const p = e.payload;
+    if (llmDownloadingIdRef.current !== p.id) return;
+    const pct =
+      p.total > 0
+        ? Math.min(100, Math.floor((p.downloaded / p.total) * 100))
+        : 0;
+    setLlmDownloadPct(pct);
+  });
+
+  useTauriEvent<LlmDownloadDone>("llm-download-done", async (e) => {
+    if (llmDownloadingIdRef.current !== e.payload.id) return;
+    setLlmDownloadingId(null);
+    setLlmDownloadPct(0);
+    try {
+      await commands.setActiveLlmModel(e.payload.path);
+    } catch (err) {
+      console.error("set_active_llm_model failed", err);
+    }
+    setRefreshTick((n) => n + 1);
+    // Auto-advance once the model is ready.
+    setStep((s) => (s === 2 ? 3 : s));
+  });
+
+  useTauriEvent<LlmDownloadFailed>("llm-download-failed", (e) => {
+    if (llmDownloadingIdRef.current !== e.payload.id) return;
+    setLlmDownloadingId(null);
+    setLlmDownloadPct(0);
+    setLlmError(e.payload.error);
     setRefreshTick((n) => n + 1);
   });
 
@@ -244,6 +289,21 @@ export function App() {
       setDownloadingFile(null);
     }
   }, [targetFilename]);
+
+  const handleDownloadLlm = useCallback(async () => {
+    const entry = llmModels[0];
+    if (!entry) return;
+    setLlmError(null);
+    setLlmDownloadingId(entry.id);
+    setLlmDownloadPct(0);
+    try {
+      await commands.downloadLlmModel(entry.id);
+    } catch (err) {
+      console.error("download_llm_model failed", err);
+      setLlmDownloadingId(null);
+      setLlmError(String(err));
+    }
+  }, [llmModels]);
 
   const handleSetWhisperActive = useCallback(async () => {
     const target = whisperModels.find((m) => m.filename === targetFilename);
@@ -349,12 +409,16 @@ export function App() {
           />
         )}
         {step === 2 && (
-          <OllamaStep
-            status={status}
-            ollamaModels={ollamaModels}
-            skipped={ollamaSkipped}
-            onSkip={() => setOllamaSkipped(true)}
-            onUnskip={() => setOllamaSkipped(false)}
+          <LlmStep
+            llmModels={llmModels}
+            llmHasModel={!!status?.has_llm_model}
+            downloading={llmDownloadingId !== null}
+            downloadPct={llmDownloadPct}
+            error={llmError}
+            skipped={llmSkipped}
+            onDownload={handleDownloadLlm}
+            onSkip={() => setLlmSkipped(true)}
+            onUnskip={() => setLlmSkipped(false)}
           />
         )}
         {step === 3 && (
@@ -377,7 +441,7 @@ export function App() {
             language={language}
             activeWhisper={activeWhisper}
             status={status}
-            ollamaSkipped={ollamaSkipped}
+            llmSkipped={llmSkipped}
             vaultStatus={vaultStatus}
           />
         )}
@@ -437,14 +501,32 @@ export function App() {
             )
           )}
           {step === 2 && (
-            <Button
-              size="sm"
-              onClick={goNext}
-              className="h-9 px-4 gap-1.5"
-            >
-              <span>Continue</span>
-              <ArrowRight size={14} aria-hidden />
-            </Button>
+            status?.has_llm_model || llmSkipped ? (
+              <Button
+                size="sm"
+                onClick={goNext}
+                className="h-9 px-4 gap-1.5"
+              >
+                <span>Continue</span>
+                <ArrowRight size={14} aria-hidden />
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={llmDownloadingId !== null || llmModels.length === 0}
+                onClick={handleDownloadLlm}
+                className="h-9 px-4 gap-1.5"
+              >
+                {llmDownloadingId !== null ? (
+                  <span>Downloading… {llmDownloadPct}%</span>
+                ) : (
+                  <>
+                    <span>Download &amp; continue</span>
+                    <ArrowRight size={14} aria-hidden />
+                  </>
+                )}
+              </Button>
+            )
           )}
           {step === 3 && (
             <Button
@@ -664,25 +746,34 @@ function ModelStep({
   );
 }
 
-function OllamaStep({
-  status,
-  ollamaModels,
+function LlmStep({
+  llmModels,
+  llmHasModel,
+  downloading,
+  downloadPct,
+  error,
   skipped,
+  onDownload,
   onSkip,
   onUnskip,
 }: {
-  status: OnboardingStatus | null;
-  ollamaModels: OllamaModel[];
+  llmModels: LlmModelInfo[];
+  llmHasModel: boolean;
+  downloading: boolean;
+  downloadPct: number;
+  error: string | null;
   skipped: boolean;
-  onSkip: () => void;
+  onDownload: () => void;
   onUnskip: () => void;
+  onSkip: () => void;
 }) {
-  const running = !!status?.ollama_running;
+  const entry = llmModels[0];
+  const sizeGb = entry ? (entry.size_bytes / 1_073_741_824).toFixed(1) : null;
 
   return (
     <StepLayout
-      title="AI cleanup (optional)"
-      subtitle="Ollama runs an LLM locally to remove fillers, fix punctuation, and apply the active profile's style. You can skip this and add it later."
+      title="AI cleanup model"
+      subtitle="Fluister includes a local LLM that removes fillers, fixes punctuation, and applies your profile's style — all on-device. It downloads once, then runs from a bundled server."
     >
       {skipped ? (
         <div className="ob-card text-center">
@@ -693,76 +784,71 @@ function OllamaStep({
             Change my mind
           </Button>
         </div>
-      ) : running && ollamaModels.length > 0 ? (
+      ) : llmHasModel ? (
         <div className="ob-card">
-          <div className="text-body font-medium text-foreground mb-1">
-            Ollama is running.
+          <div className="flex items-center gap-2 text-body font-medium text-foreground mb-1">
+            <Check size={14} className="text-[color:var(--color-success)]" aria-hidden />
+            <span>Cleanup model is ready.</span>
           </div>
-          <p className="text-footnote text-text-muted mb-3">
-            {ollamaModels.length} model{ollamaModels.length === 1 ? "" : "s"} installed.
-            Cleanup will use whichever model you select in Settings.
+          <p className="text-footnote text-text-muted">
+            {entry?.label ?? "Default cleanup model"}
+            {sizeGb && <span className="ml-2 font-mono text-tag">{sizeGb} GB</span>}
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {ollamaModels.slice(0, 6).map((m) => (
-              <span
-                key={m.name}
-                className="text-caption rounded-md bg-[color:var(--color-elev)] px-2 py-1"
-              >
-                {m.name}
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : running ? (
-        <div className="ob-card">
-          <div className="text-body font-medium text-foreground mb-1">
-            Ollama is running, but no models are pulled.
-          </div>
-          <p className="text-footnote text-text-muted mb-3">
-            In Terminal:{" "}
-            <code className="bg-[color:var(--color-elev)] px-1.5 py-0.5 rounded font-mono text-tag">
-              ollama pull llama3.2
-            </code>
-          </p>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onSkip}
-            className="h-8 w-full"
-          >
-            Skip for now
-          </Button>
         </div>
       ) : (
         <div className="ob-card">
-          <div className="text-body font-medium text-foreground mb-1">
-            Install Ollama to enable AI cleanup.
+          <div className="flex items-center gap-2 text-body font-medium text-foreground mb-1">
+            <Sparkles size={14} aria-hidden />
+            <span>{entry?.label ?? "Cleanup model"}</span>
+            {sizeGb && (
+              <span className="ml-auto font-mono text-tag text-text-muted">
+                {sizeGb} GB
+              </span>
+            )}
           </div>
           <p className="text-footnote text-text-muted mb-3">
-            It's a small free app that runs LLMs locally. Once installed, pull a
-            model like <code className="bg-[color:var(--color-elev)] px-1.5 py-0.5 rounded font-mono text-tag">llama3.2</code> and Fluister picks it up automatically.
+            One-time download. Stored locally — no data leaves your Mac.
           </p>
-          <div className="flex gap-2">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() =>
-                commands.openExternalUrl("https://ollama.com").catch(() => {})
-              }
-              className="h-8 flex-1 gap-1.5"
-            >
-              <ExternalLink size={13} aria-hidden />
-              <span>Get Ollama</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onSkip}
-              className="h-8 flex-1"
-            >
-              Skip for now
-            </Button>
-          </div>
+
+          {downloading && (
+            <div className="ob-progress mb-3">
+              <div className="ob-progress-bar">
+                <div
+                  className="ob-progress-fill"
+                  style={{ width: `${downloadPct}%` }}
+                />
+              </div>
+              <span className="ob-progress-pct">{downloadPct}%</span>
+            </div>
+          )}
+
+          {!downloading && (
+            <div className="flex gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={onDownload}
+                disabled={!entry}
+                className="h-8 flex-1"
+              >
+                Download model
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onSkip}
+                className="h-8 flex-1"
+              >
+                Skip for now
+              </Button>
+            </div>
+          )}
+
+          {error && (
+            <p className="mt-3 text-footnote text-[color:var(--color-danger)]">
+              {error}
+            </p>
+          )}
         </div>
       )}
     </StepLayout>
@@ -882,23 +968,21 @@ function DoneStep({
   language,
   activeWhisper,
   status,
-  ollamaSkipped,
+  llmSkipped,
   vaultStatus,
 }: {
   language: string;
   activeWhisper: ModelInfo | null;
   status: OnboardingStatus | null;
-  ollamaSkipped: boolean;
+  llmSkipped: boolean;
   vaultStatus: VaultStatus | null;
 }) {
   const langName = LANGUAGES.find((l) => l.code === language)?.name ?? language;
-  const ollamaSummary = ollamaSkipped
+  const llmSummary = llmSkipped
     ? "Skipped — enable later in Settings"
-    : status?.ollama_running && status.ollama_has_models
+    : status?.has_llm_model
       ? "Ready"
-      : status?.ollama_running
-        ? "Running, no models yet"
-        : "Not installed";
+      : "Not downloaded";
   const vaultSummary = vaultStatus?.path
     ? vaultStatus.path
     : "Not set up — using local cache";
@@ -928,7 +1012,7 @@ function DoneStep({
           label="Accessibility"
           value={status?.accessibility ? "Granted" : "Not granted"}
         />
-        <SummaryRow label="Ollama (cleanup)" value={ollamaSummary} />
+        <SummaryRow label="Cleanup model" value={llmSummary} />
         <SummaryRow label="Vault" value={vaultSummary} />
       </ul>
     </div>
