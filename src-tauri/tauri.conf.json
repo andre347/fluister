@@ -7,7 +7,8 @@
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "beforeBundleCommand": "bash scripts/fetch-llama-server.sh"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -78,6 +79,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns"
     ],
+    "externalBin": ["binaries/llama-server"],
+    "resources": {
+      "resources/llama": "llama"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true,

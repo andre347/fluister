@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   commands,
   type DownloadProgress,
+  type LlmDownloadDone,
+  type LlmDownloadFailed,
+  type LlmDownloadProgress,
+  type LlmModelInfo,
   type ModelInfo,
   type OllamaModel,
   type Settings,
@@ -63,7 +68,7 @@ export function ModelsPane({
         <CardHeader>
           <CardTitle>AI cleanup</CardTitle>
           <CardDescription>
-            Use Ollama to remove fillers and add punctuation.
+            Removes fillers, fixes punctuation, applies the active profile's style.
           </CardDescription>
           <CardAction>
             <Switch
@@ -72,13 +77,173 @@ export function ModelsPane({
             />
           </CardAction>
         </CardHeader>
-        <CardContent>
-          <OllamaPicker
-            currentModel={settings.ollama_model}
-            onChange={(value) => updateSettings({ ollama_model: value })}
-          />
+        <CardContent className="flex flex-col gap-4">
+          {settings.llm_backend === "external_ollama" ? (
+            <OllamaPicker
+              currentModel={settings.ollama_model}
+              onChange={(value) => updateSettings({ ollama_model: value })}
+            />
+          ) : (
+            <BundledLlmCard llmModelPath={settings.llm_model_path} />
+          )}
+
+          <div className="flex items-center justify-between border-t pt-3">
+            <div className="flex flex-col">
+              <span className="text-xs font-medium text-foreground">
+                Use external Ollama instead
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Defer to a separately installed Ollama daemon at 127.0.0.1:11434.
+              </span>
+            </div>
+            <Switch
+              checked={settings.llm_backend === "external_ollama"}
+              onCheckedChange={(v) =>
+                updateSettings({ llm_backend: v ? "external_ollama" : "bundled" })
+              }
+            />
+          </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function BundledLlmCard({ llmModelPath }: { llmModelPath: string | null }) {
+  const [models, setModels] = useState<LlmModelInfo[]>([]);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadPct, setDownloadPct] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const list = await commands.listLlmModels();
+      setModels(list);
+    } catch (e) {
+      console.error("listLlmModels failed", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh, llmModelPath]);
+
+  // Live-update progress for in-flight downloads triggered from this pane.
+  const downloadingIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    downloadingIdRef.current = downloadingId;
+  }, [downloadingId]);
+
+  useEffect(() => {
+    const unlistens: Array<() => void> = [];
+    listen<LlmDownloadProgress>("llm-download-progress", (e) => {
+      if (downloadingIdRef.current !== e.payload.id) return;
+      const pct =
+        e.payload.total > 0
+          ? Math.min(100, Math.floor((e.payload.downloaded / e.payload.total) * 100))
+          : 0;
+      setDownloadPct(pct);
+    }).then((un) => unlistens.push(un));
+    listen<LlmDownloadDone>("llm-download-done", async (e) => {
+      if (downloadingIdRef.current !== e.payload.id) return;
+      setDownloadingId(null);
+      setDownloadPct(0);
+      try {
+        await commands.setActiveLlmModel(e.payload.path);
+      } catch (err) {
+        console.error("set_active_llm_model failed", err);
+      }
+      refresh();
+    }).then((un) => unlistens.push(un));
+    listen<LlmDownloadFailed>("llm-download-failed", (e) => {
+      if (downloadingIdRef.current !== e.payload.id) return;
+      setDownloadingId(null);
+      setDownloadPct(0);
+      setError(e.payload.error);
+    }).then((un) => unlistens.push(un));
+    return () => {
+      unlistens.forEach((un) => un());
+    };
+  }, [refresh]);
+
+  const handleDownload = useCallback(
+    async (id: string) => {
+      setError(null);
+      setDownloadingId(id);
+      setDownloadPct(0);
+      try {
+        await commands.downloadLlmModel(id);
+      } catch (e) {
+        console.error("downloadLlmModel failed", e);
+        setDownloadingId(null);
+        setError(String(e));
+      }
+    },
+    [],
+  );
+
+  return (
+    <div className="flex flex-col gap-2">
+      {models.length === 0 && (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      )}
+      {models.map((m) => {
+        const isDownloading = downloadingId === m.id;
+        let action: React.ReactNode;
+        if (isDownloading) {
+          action = (
+            <div className="flex items-center gap-2 min-w-[120px]">
+              <div className="h-1 flex-1 rounded bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-[width]"
+                  style={{ width: `${downloadPct}%` }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums w-8 text-right">
+                {downloadPct}%
+              </div>
+            </div>
+          );
+        } else if (m.installed) {
+          action = (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => handleDownload(m.id)}
+            >
+              Re-download
+            </Button>
+          );
+        } else {
+          action = (
+            <Button size="sm" onClick={() => handleDownload(m.id)}>
+              Download · {formatBytes(m.size_bytes)}
+            </Button>
+          );
+        }
+        return (
+          <div
+            key={m.id}
+            className={cn(
+              "flex items-center gap-3 rounded-md border px-3 py-2",
+              m.installed ? "border-primary/40 bg-primary/5" : "border-border",
+            )}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-foreground">{m.label}</div>
+              <div className="text-xs text-muted-foreground">
+                {formatBytes(m.size_bytes)} ·{" "}
+                {m.installed ? "Installed" : "Not installed"}
+              </div>
+            </div>
+            {action}
+          </div>
+        );
+      })}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <p className="text-xs text-muted-foreground">
+        Runs locally via a bundled llama-server. No data leaves your Mac.
+      </p>
     </div>
   );
 }

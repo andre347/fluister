@@ -23,6 +23,8 @@ export interface Dictation {
   profile_id: number | null;
 }
 
+export type LlmBackend = "bundled" | "external_ollama";
+
 export interface Settings {
   ollama_model: string;
   whisper_model_path: string;
@@ -36,6 +38,13 @@ export interface Settings {
   /** Filesystem path to the user's Fluister vault, or null for SQLite-only.
    *  See Settings → Storage to set/change this. */
   vault_path: string | null;
+  /** Cleanup backend. "bundled" runs the in-app llama-server sidecar
+   *  (default for new installs). "external_ollama" defers to a separately
+   *  installed Ollama daemon — exposed as an advanced toggle. */
+  llm_backend: LlmBackend;
+  /** Path to the gguf model the bundled sidecar loads. Null = use the
+   *  default location for the catalog's first entry. */
+  llm_model_path: string | null;
 }
 
 export interface Profile {
@@ -73,6 +82,8 @@ export interface OnboardingStatus {
   microphone: MicStatus;
   accessibility: boolean;
   has_whisper_model: boolean;
+  /** True when the bundled cleanup model gguf is present on disk. */
+  has_llm_model: boolean;
   ollama_running: boolean;
   ollama_has_models: boolean;
   onboarding_complete: boolean;
@@ -110,6 +121,35 @@ export interface OllamaModel {
   size_bytes: number;
   family: string;
   parameter_size: string;
+}
+
+export interface LlmModelInfo {
+  id: string;
+  filename: string;
+  label: string;
+  size_bytes: number;
+  installed: boolean;
+  active: boolean;
+  path: string;
+}
+
+export interface LlmDownloadProgress {
+  id: string;
+  filename: string;
+  downloaded: number;
+  total: number;
+  bytes_per_sec: number;
+}
+
+export interface LlmDownloadDone {
+  id: string;
+  filename: string;
+  path: string;
+}
+
+export interface LlmDownloadFailed {
+  id: string;
+  error: string;
 }
 
 export interface VaultStatus {
@@ -166,8 +206,15 @@ export const commands = {
   deleteDictation: (id: number) => invoke<void>("delete_dictation", { id }),
   pasteDictation: (id: number) => invoke<void>("paste_dictation", { id }),
 
-  // Ollama
+  // Ollama (legacy external backend — kept for the advanced toggle)
   listOllamaModels: () => invoke<OllamaModel[]>("list_ollama_models"),
+
+  // Bundled cleanup LLM (llama-server sidecar)
+  listLlmModels: () => invoke<LlmModelInfo[]>("list_llm_models"),
+  downloadLlmModel: (id: string) =>
+    invoke<string>("download_llm_model", { id }),
+  setActiveLlmModel: (path: string) =>
+    invoke<void>("set_active_llm_model", { path }),
 
   // Profiles
   //

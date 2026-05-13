@@ -16,6 +16,10 @@ mod audio;
 mod db;
 mod frontmost;
 mod hotkey;
+mod llama_server;
+mod llm;
+mod llm_download;
+mod llm_prompt;
 mod model_download;
 mod ollama;
 mod paste;
@@ -58,6 +62,15 @@ pub struct Settings {
     /// startup.
     #[serde(default)]
     pub vault_path: Option<PathBuf>,
+    /// Which cleanup backend to use. `"bundled"` → the in-app `llama-server`
+    /// sidecar (default for new installs). `"external_ollama"` → fall back
+    /// to the user's existing Ollama daemon (advanced toggle).
+    #[serde(default = "default_llm_backend")]
+    pub llm_backend: String,
+    /// Filesystem path to the gguf model used by the bundled sidecar. None
+    /// = use the default download location for the catalog's first entry.
+    #[serde(default)]
+    pub llm_model_path: Option<String>,
 }
 
 fn default_ollama_model() -> String {
@@ -90,6 +103,10 @@ fn default_language() -> String {
     "en-US".into()
 }
 
+fn default_llm_backend() -> String {
+    llm::BACKEND_BUNDLED.into()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -103,6 +120,8 @@ impl Default for Settings {
             onboarding_complete: false,
             active_profile_id: None,
             vault_path: None,
+            llm_backend: default_llm_backend(),
+            llm_model_path: None,
         }
     }
 }
@@ -659,7 +678,7 @@ async fn run_pipeline(
     // Build initial_prompt: locale hint (British spelling, etc.) + active
     // profile vocabulary + global canonical terms.
     let mut prompt_parts: Vec<String> = Vec::new();
-    let locale = ollama::locale_hint(&settings.language);
+    let locale = llm_prompt::locale_hint(&settings.language);
     if !locale.is_empty() {
         prompt_parts.push(locale.to_string());
     }
@@ -673,7 +692,7 @@ async fn run_pipeline(
     }
     let prompt = prompt_parts.join(" ");
 
-    let whisper_iso = ollama::whisper_iso(&settings.language).map(str::to_string);
+    let whisper_iso = llm_prompt::whisper_iso(&settings.language).map(str::to_string);
 
     let raw = tokio::task::spawn_blocking(move || {
         transcriber.transcribe(&samples, &prompt, whisper_iso.as_deref())
@@ -692,18 +711,11 @@ async fn run_pipeline(
 
     let cleaned_pre = if settings.cleanup_enabled {
         emit_status(app, "cleaning", None);
-        match ollama::cleanup(
-            &raw,
-            &settings.ollama_model,
-            &settings.language,
-            style_prompt,
-        )
-        .await
-        {
+        match llm::cleanup(app, &settings, &raw, &settings.language, style_prompt).await {
             Ok(text) if !text.is_empty() => text,
             Ok(_) => raw.clone(),
             Err(e) => {
-                log::warn!("ollama cleanup failed, using raw transcript: {e}");
+                log::warn!("cleanup failed, using raw transcript: {e}");
                 raw.clone()
             }
         }
@@ -880,6 +892,50 @@ async fn list_ollama_models() -> Result<Vec<ollama::OllamaModel>, String> {
     ollama::list_models().await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn list_llm_models(state: State<'_, AppState>) -> Vec<llm_download::LlmModelInfo> {
+    let active = state
+        .settings
+        .lock()
+        .llm_model_path
+        .clone()
+        .unwrap_or_else(|| {
+            llm_download::default_model_path()
+                .to_string_lossy()
+                .into_owned()
+        });
+    llm_download::list(&active)
+}
+
+#[tauri::command]
+async fn download_llm_model(app: AppHandle, id: String) -> Result<String, String> {
+    match llm_download::download(app.clone(), id.clone()).await {
+        Ok(path) => Ok(path.to_string_lossy().into_owned()),
+        Err(e) => {
+            let _ = app.emit(
+                "llm-download-failed",
+                llm_download::LlmDownloadFailed {
+                    id,
+                    error: e.to_string(),
+                },
+            );
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Update the active bundled LLM gguf path. Called by the onboarding +
+/// Settings UI right after a successful download.
+#[tauri::command]
+fn set_active_llm_model(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let mut settings = state.settings.lock();
+    settings.llm_model_path = Some(path);
+    save_settings(&state.db, &settings).map_err(|e| e.to_string())
+}
+
 // ─── Onboarding ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Serialize)]
@@ -887,6 +943,11 @@ struct OnboardingStatus {
     microphone: permissions::MicStatus,
     accessibility: bool,
     has_whisper_model: bool,
+    /// True when the bundled cleanup model gguf is present on disk.
+    has_llm_model: bool,
+    /// True when external-Ollama is reachable on its loopback port. Only
+    /// surfaced in onboarding for the advanced-toggle decision; the
+    /// default cleanup path no longer depends on it.
     ollama_running: bool,
     ollama_has_models: bool,
     onboarding_complete: bool,
@@ -896,10 +957,21 @@ struct OnboardingStatus {
 async fn onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
     let microphone = permissions::microphone_status();
     let accessibility = permissions::accessibility_granted();
-    let onboarding_complete = state.settings.lock().onboarding_complete;
-    let active_path = state.settings.lock().whisper_model_path.clone();
+    let (onboarding_complete, active_path, llm_path) = {
+        let s = state.settings.lock();
+        (
+            s.onboarding_complete,
+            s.whisper_model_path.clone(),
+            s.llm_model_path.clone(),
+        )
+    };
     let has_whisper_model = std::path::Path::new(&active_path).exists()
         || model_download::list(&active_path).iter().any(|m| m.installed);
+
+    let llm_path = llm_path
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(llm_download::default_model_path);
+    let has_llm_model = llm_path.exists();
 
     let (ollama_running, ollama_has_models) = match ollama::list_models().await {
         Ok(models) => (true, !models.is_empty()),
@@ -910,6 +982,7 @@ async fn onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatu
         microphone,
         accessibility,
         has_whisper_model,
+        has_llm_model,
         ollama_running,
         ollama_has_models,
         onboarding_complete,
@@ -1416,19 +1489,19 @@ fn list_installed_apps() -> Vec<apps::InstalledApp> {
 /// the dev console.
 #[tauri::command]
 async fn cleanup_preview(
+    app: AppHandle,
     state: State<'_, AppState>,
     raw_text: String,
     style_prompt: String,
 ) -> Result<String, String> {
-    // Empty input → empty output, no point pinging Ollama.
     if raw_text.trim().is_empty() {
         return Ok(String::new());
     }
-    let (model, language) = {
+    let (settings, language) = {
         let s = state.settings.lock();
-        (s.ollama_model.clone(), s.language.clone())
+        (s.clone(), s.language.clone())
     };
-    ollama::cleanup(&raw_text, &model, &language, &style_prompt)
+    llm::cleanup(&app, &settings, &raw_text, &language, &style_prompt)
         .await
         .map_err(|e| e.to_string())
 }
@@ -1722,6 +1795,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(AppState {
             recorder: Arc::new(audio::Recorder::new()),
             is_recording: Arc::new(Mutex::new(false)),
@@ -1744,6 +1818,9 @@ pub fn run() {
             download_whisper_model,
             set_active_whisper_model,
             list_ollama_models,
+            list_llm_models,
+            download_llm_model,
+            set_active_llm_model,
             app_version,
             onboarding_status,
             request_microphone_access,
@@ -1847,6 +1924,11 @@ pub fn run() {
                 show_onboarding(&app.handle().clone());
             }
 
+            // Idle watchdog for the bundled llama-server — kills the child
+            // after 5 minutes without activity so it doesn't squat on ~2 GB
+            // of RAM forever.
+            llama_server::install_idle_watchdog();
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1862,8 +1944,14 @@ pub fn run() {
             // window that comes to the front when the user clicks the
             // dock.
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                show_history(app);
+            match &event {
+                tauri::RunEvent::Reopen { .. } => show_history(app),
+                tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. } => {
+                    // SIGTERM the bundled sidecar so it doesn't outlive
+                    // the parent and squat on RAM. Falls back to SIGKILL.
+                    llama_server::shutdown_blocking();
+                }
+                _ => {}
             }
             // Suppress the unused-variable lint on non-macOS builds. The
             // reopen handler is the only event we currently observe.
