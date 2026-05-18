@@ -31,6 +31,20 @@ mod vocabulary;
 
 const SETTINGS_KEY: &str = "config";
 
+/// Reject model paths that aren't a direct child of the managed models
+/// directory. The frontend only ever passes paths produced by the download
+/// catalog, so anything else is a frontend bug or a tampering attempt.
+fn assert_managed_model_path(path: &str, managed_dir: &Path) -> Result<(), String> {
+    let p = Path::new(path);
+    match p.parent() {
+        Some(parent) if parent == managed_dir => Ok(()),
+        _ => Err(format!(
+            "model path must live under {}",
+            managed_dir.display()
+        )),
+    }
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -931,6 +945,7 @@ fn set_active_llm_model(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<(), String> {
+    assert_managed_model_path(&path, &llm_download::models_dir())?;
     let mut settings = state.settings.lock();
     settings.llm_model_path = Some(path);
     save_settings(&state.db, &settings).map_err(|e| e.to_string())
@@ -1006,6 +1021,12 @@ fn open_privacy_panel(panel: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
+    // `open` parses any arg starting with `-` as a flag (e.g. `-a /App.app`
+    // launches an arbitrary application). Restricting to http(s) means the
+    // first character is always a letter, so argv injection is impossible.
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("only http(s) URLs are permitted".into());
+    }
     std::process::Command::new("open")
         .arg(url)
         .spawn()
@@ -1045,6 +1066,7 @@ fn set_active_whisper_model(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<(), String> {
+    assert_managed_model_path(&path, &model_download::models_dir())?;
     {
         let mut current = state.settings.lock();
         current.whisper_model_path = path;
@@ -1108,6 +1130,22 @@ fn update_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
+    // Validate only when a path *changes* from what's persisted, so an
+    // existing FLUISTER_MODEL-derived path stays editable in other fields.
+    {
+        let current = state.settings.lock();
+        if current.whisper_model_path != settings.whisper_model_path {
+            assert_managed_model_path(
+                &settings.whisper_model_path,
+                &model_download::models_dir(),
+            )?;
+        }
+        if current.llm_model_path != settings.llm_model_path {
+            if let Some(p) = &settings.llm_model_path {
+                assert_managed_model_path(p, &llm_download::models_dir())?;
+            }
+        }
+    }
     save_settings(&state.db, &settings).map_err(|e| e.to_string())?;
     let position_changed;
     {

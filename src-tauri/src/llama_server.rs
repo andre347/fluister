@@ -37,6 +37,10 @@ enum Inner {
         pid: u32,
         child: CommandChild,
         last_used: Instant,
+        /// Bearer token llama-server expects on every chat request. Random
+        /// per spawn so that other local processes which discover the port
+        /// can't trivially share the user's model.
+        api_key: String,
     },
 }
 
@@ -74,11 +78,12 @@ pub fn install_idle_watchdog() {
 /// Make a cleanup chat-completions request against the bundled server,
 /// (re)spawning it if necessary.
 pub async fn chat_completions(app: &AppHandle, model_path: &Path, body: Value) -> Result<String> {
-    let base_url = ensure_running(app, model_path).await?;
+    let (base_url, api_key) = ensure_running(app, model_path).await?;
 
     let resp = http()
         .post(format!("{base_url}/v1/chat/completions"))
         .timeout(CHAT_TIMEOUT)
+        .bearer_auth(&api_key)
         .json(&body)
         .send()
         .await
@@ -116,10 +121,11 @@ pub async fn chat_completions(app: &AppHandle, model_path: &Path, body: Value) -
     }
 }
 
-/// Lazy-spawns the sidecar if not already running, returns its base URL.
+/// Lazy-spawns the sidecar if not already running, returns its base URL and
+/// the per-spawn bearer token the caller must present on every chat request.
 /// Holds the supervisor mutex across spawn + health check, so concurrent
 /// callers wait for the first one to finish bringing the server up.
-pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<String> {
+pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<(String, String)> {
     if !model_path.exists() {
         return Err(anyhow!(
             "cleanup model is not downloaded yet at {}",
@@ -134,13 +140,14 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<String
         // No portable try_wait() on CommandChild, so we treat the cached
         // state as authoritative and let HTTP errors surface a dead child
         // on the next request (the supervisor re-spawns then).
-        if let Inner::Running { port, last_used, .. } = &mut *guard {
+        if let Inner::Running { port, last_used, api_key, .. } = &mut *guard {
             *last_used = Instant::now();
-            return Ok(format!("http://127.0.0.1:{port}"));
+            return Ok((format!("http://127.0.0.1:{port}"), api_key.clone()));
         }
     }
 
     let port = pick_free_port()?;
+    let api_key = ulid::Ulid::new().to_string();
     log::info!(
         "spawning llama-server on 127.0.0.1:{port} with {}",
         model_path.display()
@@ -157,6 +164,11 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<String
             "--host", "127.0.0.1",
             "--port", &port.to_string(),
             "--model", &model_path_str,
+            // Require a bearer token on every chat request so other local
+            // processes that discover the port can't piggyback on the
+            // user's loaded model. `/health` is exempt server-side, so the
+            // readiness poll below doesn't need to authenticate.
+            "--api-key", &api_key,
             // CPU thread count: leave default (llama.cpp picks a sensible
             // value from hw_concurrency). Metal handles the heavy lifting.
             "--no-webui",
@@ -210,6 +222,7 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<String
         pid,
         child,
         last_used: Instant::now(),
+        api_key: api_key.clone(),
     };
 
     // Drop the mutex during /health polling so a slow startup doesn't lock
@@ -225,7 +238,7 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<String
         }
     })?;
 
-    Ok(format!("http://127.0.0.1:{port}"))
+    Ok((format!("http://127.0.0.1:{port}"), api_key))
 }
 
 /// Synchronous shutdown — called from the Tauri `RunEvent::Exit` hook. Tries
