@@ -47,9 +47,20 @@ fn run<P: Fn() + 'static, R: Fn() + 'static>(on_press: P, on_release: R) {
         vec![CGEventType::FlagsChanged],
         move |_proxy, _ev_type, event| {
             let keycode = event.get_integer_value_field(KEYBOARD_EVENT_KEYCODE);
+            let raw_flags = event.get_flags().bits();
+            log::debug!(
+                "hotkey: FlagsChanged keycode={:#x} flags={:#018x}",
+                keycode,
+                raw_flags
+            );
             if keycode == KVK_RIGHT_OPTION {
-                let raw_flags = event.get_flags().bits();
                 let now = (raw_flags & NX_DEVICERALTKEYMASK) != 0;
+                log::info!(
+                    "hotkey: RightOption event flags={:#018x} device-bit={} prev_pressed={}",
+                    raw_flags,
+                    now,
+                    pressed.get()
+                );
                 if now != pressed.get() {
                     pressed.set(now);
                     if now {
@@ -85,5 +96,6 @@ fn run<P: Fn() + 'static, R: Fn() + 'static>(on_press: P, on_release: R) {
         CFRunLoop::get_current().add_source(&source, kCFRunLoopCommonModes);
     }
     tap.enable();
+    log::info!("hotkey: CGEventTap enabled, listening for Right Option");
     CFRunLoop::run_current();
 }
