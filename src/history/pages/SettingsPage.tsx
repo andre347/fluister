@@ -9,26 +9,52 @@ import {
   type Theme,
 } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
+import {
+  IconAbout,
+  IconHotkey,
+  IconMic,
+  IconModels,
+  IconSettings,
+  IconSparkle,
+  IconStorage,
+} from "../../components/icons";
 import { GeneralPane } from "../panes/GeneralPane";
 import { RecordingPane } from "../panes/RecordingPane";
+import { CleanupPane } from "../panes/CleanupPane";
+import { HotkeysPane } from "../panes/HotkeysPane";
 import { ModelsPane } from "../panes/ModelsPane";
 import { StoragePane } from "../panes/StoragePane";
 import { AboutPane } from "../panes/AboutPane";
 import { cn } from "../../lib/utils";
 
-type SettingsTab = "general" | "recording" | "models" | "storage" | "about";
+type SettingsTab =
+  | "general"
+  | "recording"
+  | "cleanup"
+  | "hotkeys"
+  | "models"
+  | "storage"
+  | "about";
 
-const TABS: { id: SettingsTab; label: string; hint: string }[] = [
-  { id: "general", label: "General", hint: "Theme, language, overlay position" },
-  { id: "recording", label: "Recording", hint: "Hotkey, mic, voice activity" },
-  { id: "models", label: "Models", hint: "Whisper sizes & Ollama" },
-  { id: "storage", label: "Storage", hint: "Vault folder for profiles + vocab" },
-  { id: "about", label: "About", hint: "Version & updates" },
+const TABS: {
+  id: SettingsTab;
+  label: string;
+  icon: (props: { size?: number; strokeWidth?: number }) => React.ReactNode;
+}[] = [
+  { id: "general",   label: "General",   icon: (p) => <IconSettings {...p} /> },
+  { id: "recording", label: "Recording", icon: (p) => <IconMic {...p} /> },
+  { id: "cleanup",   label: "Cleanup",   icon: (p) => <IconSparkle {...p} /> },
+  { id: "hotkeys",   label: "Hotkeys",   icon: (p) => <IconHotkey {...p} /> },
+  { id: "models",    label: "Models",    icon: (p) => <IconModels {...p} /> },
+  { id: "storage",   label: "Storage",   icon: (p) => <IconStorage {...p} /> },
+  { id: "about",     label: "About",     icon: (p) => <IconAbout {...p} /> },
 ];
 
 const TAB_TITLE: Record<SettingsTab, string> = {
   general: "General",
   recording: "Recording",
+  cleanup: "Cleanup",
+  hotkeys: "Hotkeys",
   models: "Models",
   storage: "Storage",
   about: "About",
@@ -51,10 +77,8 @@ export function SettingsPage() {
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(
     () => new Map(),
   );
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const saveTimer = useRef<number | undefined>(undefined);
-  const statusTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,15 +103,6 @@ export function SettingsPage() {
     }
   }, []);
 
-  const showStatus = useCallback((msg: string) => {
-    setStatusMessage(msg);
-    window.clearTimeout(statusTimer.current);
-    statusTimer.current = window.setTimeout(
-      () => setStatusMessage(null),
-      1200,
-    );
-  }, []);
-
   const updateSettings = useCallback(
     (patch: Partial<Settings>) => {
       setSettings((curr) => {
@@ -97,16 +112,14 @@ export function SettingsPage() {
         saveTimer.current = window.setTimeout(async () => {
           try {
             await commands.updateSettings(next);
-            showStatus("Saved");
           } catch (err) {
             console.error("update_settings failed", err);
-            showStatus("Save failed");
           }
         }, 400);
         return next;
       });
     },
-    [showStatus],
+    [],
   );
 
   const handleThemeChange = useCallback(
@@ -147,12 +160,11 @@ export function SettingsPage() {
         await refreshWhisperModels();
         const fresh = await commands.getSettings();
         setSettings(fresh);
-        showStatus("Model switched");
       } catch (err) {
         console.error("set_active_whisper_model failed", err);
       }
     },
-    [refreshWhisperModels, showStatus],
+    [refreshWhisperModels],
   );
 
   useTauriEvent<DownloadProgress>("model-download-progress", (e) => {
@@ -180,7 +192,6 @@ export function SettingsPage() {
       await refreshWhisperModels();
       const after = await commands.getSettings();
       setSettings(after);
-      showStatus("Model installed");
     } catch (err) {
       console.error(err);
       await refreshWhisperModels();
@@ -193,7 +204,7 @@ export function SettingsPage() {
       next.delete(e.payload.filename);
       return next;
     });
-    showStatus(`Download failed: ${e.payload.error}`);
+    console.error(`Download failed: ${e.payload.error}`);
   });
 
   useTauriEvent<unknown>("models-changed", () => {
@@ -205,46 +216,32 @@ export function SettingsPage() {
   });
 
   return (
-    <div className="hist-twocol">
-      <div className="hist-list-pane">
-        <div className="hist-list-scroll scrollable">
-          {TABS.map((t) => (
+    <div className="settings-page">
+      <div role="tablist" aria-label="Settings sections" className="settings-tabbar">
+        {TABS.map((t) => {
+          const selected = t.id === tab;
+          return (
             <button
               key={t.id}
+              role="tab"
               type="button"
+              aria-pressed={selected}
+              aria-selected={selected}
               onClick={() => setTab(t.id)}
-              aria-pressed={tab === t.id}
-              className={cn(
-                "hist-list-row hist-list-row-tall",
-                tab === t.id && "hist-list-row-selected",
-              )}
+              className={cn("settings-tab")}
             >
-              <div className="text-item font-medium">{t.label}</div>
-              <div className="hist-list-row-text text-text-muted">{t.hint}</div>
+              {t.icon({ size: 20, strokeWidth: 1.5 })}
+              <span>{t.label}</span>
             </button>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
-      <div className="hist-detail">
-        <div className="hist-detail-header">
-          <div className="text-tag font-medium uppercase tracking-wider text-faint">
-            {TAB_TITLE[tab]}
-          </div>
-          <div
-            aria-live="polite"
-            className={cn(
-              "text-footnote text-text-muted transition-opacity",
-              statusMessage ? "opacity-100" : "opacity-0",
-            )}
-          >
-            {statusMessage ?? " "}
-          </div>
-        </div>
-
-        <div className="hist-detail-scroll">
+      <div className="settings-scroll scrollable">
+        <div className="settings-inner">
+          <h2 className="settings-h2">{TAB_TITLE[tab]}</h2>
           {settings ? (
-            <div className="max-w-[640px]">
+            <>
               {tab === "general" && (
                 <GeneralPane
                   settings={settings}
@@ -263,10 +260,15 @@ export function SettingsPage() {
                   onSwitchToModelsSection={() => setTab("models")}
                 />
               )}
-              {tab === "models" && (
-                <ModelsPane
+              {tab === "cleanup" && (
+                <CleanupPane
                   settings={settings}
                   updateSettings={updateSettings}
+                />
+              )}
+              {tab === "hotkeys" && <HotkeysPane />}
+              {tab === "models" && (
+                <ModelsPane
                   whisperModels={whisperModels}
                   downloads={downloads}
                   onSwitchModel={useWhisperModel}
@@ -275,9 +277,9 @@ export function SettingsPage() {
               )}
               {tab === "storage" && <StoragePane />}
               {tab === "about" && <AboutPane />}
-            </div>
+            </>
           ) : (
-            <div className="text-text-muted text-footnote">Loading…</div>
+            <div className="pref-row-hint">Loading…</div>
           )}
         </div>
       </div>

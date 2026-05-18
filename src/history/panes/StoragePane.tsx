@@ -2,15 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { commands, type VaultStatus } from "../../lib/tauri";
 import { useTauriEvent } from "../../lib/hooks";
-import { Button } from "../../components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card";
+import { Btn, Tag } from "../../components/atoms";
+import { PrefGroup, PrefRow } from "./Pref";
 
 export function StoragePane() {
   const [status, setStatus] = useState<VaultStatus | null>(null);
@@ -41,7 +34,7 @@ export function StoragePane() {
       });
       if (typeof picked !== "string") {
         setBusy(false);
-        return; // user cancelled
+        return;
       }
       const next = await commands.setVaultPath(picked);
       setStatus(next);
@@ -76,117 +69,91 @@ export function StoragePane() {
 
   if (!status) {
     return (
-      <div className="text-text-muted text-footnote">Loading vault status…</div>
+      <PrefGroup>
+        <PrefRow label="Vault">
+          <span className="pref-row-hint">Loading vault status…</span>
+        </PrefRow>
+      </PrefGroup>
     );
   }
 
   const enabled = status.path !== null;
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>{enabled ? "Vault" : "Set up a vault"}</CardTitle>
-          <CardDescription className="leading-relaxed">
-            {enabled
-              ? "Profiles and vocabulary are stored as plain Markdown files in this folder. Sync via iCloud, Dropbox, or Git — your data stays on your machine."
-              : "Store profiles and vocabulary as plain Markdown files in a folder of your choosing. The folder syncs via iCloud / Dropbox / Git just like any other directory. Without a vault, Fluister keeps everything in its local SQLite cache."}
-          </CardDescription>
-          <CardAction>
-            <Button
-              variant={enabled ? "ghost" : "default"}
-              size="sm"
-              onClick={handlePick}
-              disabled={busy}
-            >
-              {enabled ? "Change folder…" : "Choose folder…"}
-            </Button>
-          </CardAction>
-        </CardHeader>
+    <>
+      <PrefGroup>
+        <PrefRow
+          label="Vault"
+          hint={
+            enabled
+              ? "Profiles and vocabulary are stored as plain Markdown files in this folder. Sync via iCloud, Dropbox or Git — your data stays on your machine."
+              : "Store profiles and vocabulary as plain Markdown files in a folder of your choosing. Without a vault, Fluister keeps everything in its local SQLite cache."
+          }
+        >
+          <Btn size="sm" onClick={handlePick} disabled={busy}>
+            {enabled ? "Change folder…" : "Choose folder…"}
+          </Btn>
+        </PrefRow>
+
         {enabled && (
-          <CardContent className="flex flex-col gap-2 pt-0">
-            <PathRow label="Folder" value={status.path ?? ""} />
-            <PathRow label="Profiles" value={`${status.profile_count}`} />
-            <PathRow label="Vocabulary" value={`${status.vocab_count}`} />
-            <PathRow
-              label="Status"
-              value={status.exists ? "Reachable" : "Folder is missing"}
-              warn={!status.exists}
-            />
-          </CardContent>
+          <>
+            <PrefRow label="Folder">
+              <span
+                className="font-fl-mono text-[11px] text-ink-2 break-all"
+                title={status.path ?? ""}
+              >
+                {status.path}
+              </span>
+            </PrefRow>
+            <PrefRow label="Profiles">
+              <span className="font-fl-mono text-[11px] text-ink-2">
+                {status.profile_count}
+              </span>
+            </PrefRow>
+            <PrefRow label="Vocabulary">
+              <span className="font-fl-mono text-[11px] text-ink-2">
+                {status.vocab_count}
+              </span>
+            </PrefRow>
+            <PrefRow label="Status">
+              {status.exists ? (
+                <Tag tone="green">Reachable</Tag>
+              ) : (
+                <Tag tone="amber">Folder is missing</Tag>
+              )}
+            </PrefRow>
+          </>
         )}
-      </Card>
+      </PrefGroup>
 
       {enabled && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Manage</CardTitle>
-            <CardDescription>
-              Open the folder in Finder to inspect or edit files directly.
-              Disable to drop back to SQLite-only mode — files are kept on
-              disk.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center gap-2 pt-0">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleOpen}
-              disabled={busy}
-            >
+        <PrefGroup title="Manage">
+          <PrefRow
+            label="In Finder"
+            hint="Open the folder to inspect or edit files directly."
+          >
+            <Btn size="sm" onClick={handleOpen} disabled={busy}>
               Open in Finder
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleClear}
-              disabled={busy}
-              className="text-text-muted hover:text-[color:var(--color-danger)]"
-            >
-              Disable vault
-            </Button>
-          </CardContent>
-        </Card>
+            </Btn>
+          </PrefRow>
+          <PrefRow
+            label="Disable vault"
+            hint="Drop back to SQLite-only mode. Files on disk are kept."
+          >
+            <Btn size="sm" kind="danger" onClick={handleClear} disabled={busy}>
+              Disable
+            </Btn>
+          </PrefRow>
+        </PrefGroup>
       )}
 
       {error && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-[color:var(--color-danger)]">
-              Vault error
-            </CardTitle>
-            <CardDescription className="font-mono text-[11px]">
-              {error}
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <PrefGroup title="Vault error">
+          <PrefRow label="Details">
+            <span className="font-fl-mono text-[11px] text-red">{error}</span>
+          </PrefRow>
+        </PrefGroup>
       )}
-    </div>
-  );
-}
-
-function PathRow({
-  label,
-  value,
-  warn,
-}: {
-  label: string;
-  value: string;
-  warn?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 text-footnote">
-      <span className="text-text-muted shrink-0">{label}</span>
-      <span
-        className={
-          warn
-            ? "text-[color:var(--color-danger)] font-mono text-[11px] truncate text-right"
-            : "text-foreground font-mono text-[11px] truncate text-right"
-        }
-        title={value}
-      >
-        {value || "—"}
-      </span>
-    </div>
+    </>
   );
 }

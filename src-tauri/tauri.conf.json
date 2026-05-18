@@ -73,6 +73,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -87,6 +88,15 @@
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true,
       "entitlements": "Entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/andre347/fluister/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0OURCRDI5NThDNkRCNjcKUldSbjI4WllLYjJkZE9qL242MFVLZXdFcW5tRGo1TTk4R1ZlYUIvbG9TdmRPMEdUNWVUeWpUS0cK",
+      "dialog": false
     }
   }
 }

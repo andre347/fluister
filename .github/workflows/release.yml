@@ -1,0 +1,80 @@
+name: Release
+
+# Triggered when a `vX.Y.Z` tag is pushed. Builds the macOS Apple-Silicon
+# bundle, signs it with the Tauri updater key, and uploads:
+#
+#   - Fluister_<version>_aarch64.dmg          (versioned, archival)
+#   - Fluister_aarch64.dmg                    (canonical, marketing-site button)
+#   - Fluister.app.tar.gz                     (updater artifact)
+#   - Fluister.app.tar.gz.sig                 (updater signature)
+#   - latest.json                             (updater manifest)
+#
+# The marketing site and the in-app updater both fetch from
+# `https://github.com/andre347/fluister/releases/latest/download/...`,
+# which auto-resolves to the newest release tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: macos-14   # Apple Silicon runner — matches our build target
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Add aarch64-apple-darwin Rust target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build, sign, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Fluister ${{ github.ref_name }}'
+          releaseDraft: false
+          prerelease: false
+          args: --target aarch64-apple-darwin
+          includeUpdaterJson: true
+
+      # The Tauri bundler names the DMG with the version embedded (e.g.
+      # `Fluister_0.2.0_aarch64.dmg`). The marketing site button points at
+      # the stable URL `releases/latest/download/Fluister_aarch64.dmg`, so
+      # we upload a canonical-named copy alongside the versioned one.
+      - name: Add canonical-named DMG to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p staging
+          gh release download "$TAG" -D staging --pattern '*.dmg'
+          DMG=$(find staging -name 'Fluister_*_aarch64.dmg' | head -1)
+          if [ -z "$DMG" ]; then
+            echo "No versioned DMG found in release — aborting." >&2
+            exit 1
+          fi
+          cp "$DMG" staging/Fluister_aarch64.dmg
+          gh release upload "$TAG" staging/Fluister_aarch64.dmg --clobber

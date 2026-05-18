@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTauriEvent, useThemeFromSettings } from "../lib/hooks";
+import { UpdaterProvider } from "../lib/useUpdater";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { IconRail, type Section } from "./IconRail";
 import { HistoryPage } from "./pages/HistoryPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
 import { VocabularyPage } from "./pages/VocabularyPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { UpdateBanner } from "./UpdateBanner";
 
 export function App() {
   const [section, setSection] = useState<Section>("history");
@@ -51,25 +53,28 @@ export function App() {
   }, []);
 
   return (
-    <TooltipProvider delay={300}>
-      <div className="hist-shell">
-        {/* Title bar — spans full width so traffic lights overlay neatly. */}
-        <div className="hist-titlebar" data-tauri-drag-region />
-        <IconRail section={section} onSectionChange={setSection} />
-        <div className="hist-content">
-          {section === "history" && (
-            <HistoryPage onAddedToVocab={handleVocabAdded} />
-          )}
-          {section === "profiles" && <ProfilesPage />}
-          {section === "vocabulary" && (
-            <VocabularyPage
-              focusEntryId={vocabFocusId}
-              onFocusConsumed={() => setVocabFocusId(null)}
-            />
-          )}
-          {section === "settings" && <SettingsPage />}
+    <UpdaterProvider>
+      <TooltipProvider delay={300}>
+        <div className="hist-shell">
+          {/* Title bar — spans full width so traffic lights overlay neatly. */}
+          <div className="hist-titlebar" data-tauri-drag-region />
+          <IconRail section={section} onSectionChange={setSection} />
+          <div className="hist-content">
+            {section === "history" && (
+              <HistoryPage onAddedToVocab={handleVocabAdded} />
+            )}
+            {section === "profiles" && <ProfilesPage />}
+            {section === "vocabulary" && (
+              <VocabularyPage
+                focusEntryId={vocabFocusId}
+                onFocusConsumed={() => setVocabFocusId(null)}
+              />
+            )}
+            {section === "settings" && <SettingsPage />}
+          </div>
+          <UpdateBanner />
         </div>
-      </div>
-    </TooltipProvider>
+      </TooltipProvider>
+    </UpdaterProvider>
   );
 }
