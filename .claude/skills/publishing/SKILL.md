@@ -106,6 +106,14 @@ The marketing site button at `releases/latest/download/Fluister_aarch64.dmg` onl
 
 CI builds `aarch64-apple-darwin` only. Intel Macs cannot run Fluister (whisper-rs Metal feature, llama-server arm64 binary). The marketing site should make this clear.
 
+### `signingIdentity: "-"` must stay set
+
+In `src-tauri/tauri.conf.json` under `bundle.macOS`, `signingIdentity` is set to `"-"` so Tauri ad-hoc-signs at build time using the bundle identifier (`com.fluister.app`) as the signing identifier. Don't remove it.
+
+If unset, Tauri skips codesign and macOS auto-ad-hoc-signs the binary at first launch with a *random* identifier like `fluister-ebdddd0d54694441`. TCC keys Accessibility grants by signing identifier, so a different random ID per install means the user's Accessibility grant breaks silently on every release. The toggle in System Settings shows "on" but `AXIsProcessTrusted` returns false.
+
+Verify after building: `codesign -dv /Applications/Fluister.app` should print `Identifier=com.fluister.app`, not a random hex string. If the identifier looks random, the conf has drifted.
+
 ### Tag rewriting is sometimes fine
 
 If CI fails before producing a release, the tag is harmless to delete and recreate:
@@ -137,6 +145,7 @@ If a shipped release has a bug:
 | Bundle succeeds, release page empty | `GITHUB_TOKEN` lacks write permission. Repo Settings → Actions → General → Workflow permissions → "Read and write". |
 | Updater endpoint 404 | `latest.json` didn't upload. Check the workflow log; usually a `tauri-action` config issue. |
 | Marketing-site URL 404 | Canonical-rename step skipped. Check the workflow log for the `gh release upload` line. |
+| Accessibility grant doesn't survive release | `signingIdentity` got removed from tauri.conf.json. Add `"signingIdentity": "-"` back to `bundle.macOS`. |
 
 ## Reference
 
