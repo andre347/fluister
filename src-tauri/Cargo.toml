@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Voice-to-text overlay with local Whisper transcription + bundled llama-server cleanup"
 authors = ["Andre de Vries"]
 edition = "2021"
+homepage = "https://fluister-web.vercel.app"
+repository = "https://github.com/andre347/fluister"
+license = "MIT"
 
 [lib]
 name = "fluister_lib"

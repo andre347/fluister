@@ -84,6 +84,16 @@ export function AboutPane() {
           size="sm"
           onClick={() =>
             commands
+              .openExternalUrl("https://fluister-web.vercel.app")
+              .catch((err) => console.error("open_external_url failed", err))
+          }
+        >
+          Visit website
+        </Btn>
+        <Btn
+          size="sm"
+          onClick={() =>
+            commands
               .openExternalUrl("https://github.com/andre347/fluister")
               .catch((err) => console.error("open_external_url failed", err))
           }

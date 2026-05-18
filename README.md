@@ -4,6 +4,8 @@ A tiny macOS menu-bar dictation app. Hold Right Option, talk, release. The text 
 
 Everything runs on your Mac. No network calls, no telemetry, no cloud transcription.
 
+Website: [fluister-web.vercel.app](https://fluister-web.vercel.app)
+
 ## Requirements
 
 - macOS 11 or later
