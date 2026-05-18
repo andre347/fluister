@@ -1955,6 +1955,38 @@ pub fn run() {
                 if let Err(err) = overlay.set_ignore_cursor_events(true) {
                     log::warn!("overlay set_ignore_cursor_events failed: {err:?}");
                 }
+
+                // Tauri's `alwaysOnTop: true` maps to NSFloatingWindowLevel (3),
+                // which floats above other windows of the same app but does
+                // NOT reliably float above another app's windows when we are a
+                // menu-bar agent (LSUIElement = true). Bump the level to
+                // NSStatusWindowLevel (25) so the recording pill is visible
+                // even when the user is dictating into a different app.
+                //
+                // Also opt the window into all Spaces + fullscreen contexts so
+                // the pill follows the user instead of being trapped on the
+                // Space where it was first shown.
+                unsafe {
+                    use objc2::msg_send;
+                    use objc2::runtime::AnyObject;
+                    match overlay.ns_window() {
+                        Ok(ptr) => {
+                            let ns_window = ptr as *mut AnyObject;
+                            const NS_STATUS_WINDOW_LEVEL: isize = 25;
+                            let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+
+                            // NSWindowCollectionBehavior bits:
+                            //   CanJoinAllSpaces      = 1 << 0
+                            //   FullScreenAuxiliary   = 1 << 8
+                            //   IgnoresCycle          = 1 << 6
+                            const COLLECTION_BEHAVIOR: u64 = (1 << 0) | (1 << 8) | (1 << 6);
+                            let _: () = msg_send![ns_window, setCollectionBehavior: COLLECTION_BEHAVIOR];
+                        }
+                        Err(err) => {
+                            log::warn!("overlay ns_window unavailable: {err:?}");
+                        }
+                    }
+                }
             }
 
             // First-launch (or any launch where onboarding was skipped):
