@@ -7,6 +7,7 @@ import {
   IconHistory,
   IconProfile,
   IconVocab,
+  IconSettings,
 } from "../components/icons";
 import { cn } from "../lib/utils";
 
@@ -16,6 +17,10 @@ const TOP: { id: Section; label: string; icon: React.ReactNode; shortcut: string
   { id: "history",    label: "History",    icon: <IconHistory size={16} strokeWidth={1.6} />, shortcut: "⌘1" },
   { id: "profiles",   label: "Profiles",   icon: <IconProfile size={16} strokeWidth={1.6} />, shortcut: "⌘2" },
   { id: "vocabulary", label: "Vocabulary", icon: <IconVocab   size={16} strokeWidth={1.6} />, shortcut: "⌘3" },
+];
+
+const BOTTOM: { id: Section; label: string; icon: React.ReactNode; shortcut: string }[] = [
+  { id: "settings",   label: "Settings",   icon: <IconSettings size={16} strokeWidth={1.6} />, shortcut: "⌘," },
 ];
 
 type Props = {
@@ -28,6 +33,19 @@ export function IconRail({ section, onSectionChange }: Props) {
     <nav className="hist-rail" aria-label="Sections">
       <div className="flex flex-col items-center gap-1">
         {TOP.map((item) => (
+          <RailButton
+            key={item.id}
+            isActive={section === item.id}
+            label={item.label}
+            shortcut={item.shortcut}
+            onClick={() => onSectionChange(item.id)}
+          >
+            {item.icon}
+          </RailButton>
+        ))}
+      </div>
+      <div className="mt-auto flex flex-col items-center gap-1">
+        {BOTTOM.map((item) => (
           <RailButton
             key={item.id}
             isActive={section === item.id}

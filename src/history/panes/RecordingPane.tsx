@@ -1,23 +1,28 @@
+import { useMemo } from "react";
 import type {
   DownloadProgress,
   ModelInfo,
   Settings,
 } from "../../lib/tauri";
 import { LANGUAGES, languageDisplayName } from "../../languages";
-import { Button } from "../../components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card";
-import { cn } from "../../lib/utils";
+import { Btn, Segmented } from "../../components/atoms";
+import { Switch } from "../../components/ui/switch";
+import { PrefGroup, PrefRow } from "./Pref";
 import { formatBytes } from "../../lib/format";
+import { cn } from "../../lib/utils";
 
 function isEnglishOnly(code: string): boolean {
   return code === "en" || code.startsWith("en-");
 }
+
+const SILENCE_OPTIONS = [
+  { value: "1000", label: "1.0s" },
+  { value: "1500", label: "1.5s" },
+  { value: "2000", label: "2.0s" },
+  { value: "3000", label: "3.0s" },
+] as const;
+
+const DEFAULT_SILENCE_MS = 1500;
 
 type Props = {
   settings: Settings;
@@ -38,24 +43,28 @@ export function RecordingPane({
   onDownloadModel,
   onSwitchToModelsSection,
 }: Props) {
+  // Pick the closest preset for the toggle's right-hand segmented control.
+  // When vad is disabled (0), fall back to the default-ish 1.5s so flipping
+  // the toggle back on doesn't land on a weird value.
+  const silenceValue = useMemo(() => {
+    const ms = settings.vad_silence_ms || DEFAULT_SILENCE_MS;
+    const found = SILENCE_OPTIONS.find((o) => Number(o.value) === ms);
+    return found ? found.value : "1500";
+  }, [settings.vad_silence_ms]);
+
+  const vadEnabled = settings.vad_silence_ms > 0;
+
   return (
-    <div className="flex flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Spoken language</CardTitle>
-          <CardDescription>
-            Whisper transcribes in this language. Pick the closest match for
-            best accuracy.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <>
+      <PrefGroup>
+        <PrefRow
+          label="Spoken language"
+          hint="Pick the closest match for best Whisper accuracy."
+        >
           <select
             value={settings.language}
             onChange={(e) => updateSettings({ language: e.target.value })}
-            className={cn(
-              "h-9 w-full max-w-sm rounded-md border border-input bg-transparent px-3 text-sm shadow-xs",
-              "focus:outline-none focus:ring-2 focus:ring-ring",
-            )}
+            className="h-[26px] rounded-[5px] border-[0.5px] border-hair-strong bg-white text-ink text-[13px] px-2 pr-7"
           >
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -63,10 +72,35 @@ export function RecordingPane({
               </option>
             ))}
           </select>
-        </CardContent>
-      </Card>
+        </PrefRow>
 
-      <ModelWarning
+        <PrefRow
+          label="Auto-stop after silence"
+          hint="Stops recording if you go quiet for this long."
+        >
+          <div className="flex items-center gap-2.5">
+            <Switch
+              size="sm"
+              checked={vadEnabled}
+              onCheckedChange={(v) =>
+                updateSettings({
+                  vad_silence_ms: v ? Number(silenceValue) : 0,
+                })
+              }
+            />
+            <div className={cn(!vadEnabled && "opacity-40 pointer-events-none")}>
+              <Segmented
+                options={SILENCE_OPTIONS}
+                value={silenceValue}
+                onChange={(v) => updateSettings({ vad_silence_ms: Number(v) })}
+                size="sm"
+              />
+            </div>
+          </div>
+        </PrefRow>
+      </PrefGroup>
+
+      <ModelLanguageWarning
         settings={settings}
         whisperModels={whisperModels}
         downloads={downloads}
@@ -74,11 +108,11 @@ export function RecordingPane({
         onDownloadModel={onDownloadModel}
         onOpenModels={onSwitchToModelsSection}
       />
-    </div>
+    </>
   );
 }
 
-function ModelWarning({
+function ModelLanguageWarning({
   settings,
   whisperModels,
   downloads,
@@ -108,46 +142,43 @@ function ModelWarning({
   let actionButton: React.ReactNode;
   if (multi?.installed) {
     actionButton = (
-      <Button size="sm" onClick={() => onSwitchModel(multi.path)}>
+      <Btn size="sm" onClick={() => onSwitchModel(multi.path)}>
         Switch to {multi.label.split(" — ")[0]}
-      </Button>
+      </Btn>
     );
   } else if (multi) {
     const isDownloading = downloads.has(multi.filename);
     actionButton = (
-      <Button
+      <Btn
         size="sm"
         disabled={isDownloading}
         onClick={() => onDownloadModel(multi.filename)}
       >
         Download · {formatBytes(multi.size_bytes)}
-      </Button>
+      </Btn>
     );
   } else {
     actionButton = (
-      <Button size="sm" variant="secondary" onClick={onOpenModels}>
+      <Btn size="sm" onClick={onOpenModels}>
         Open Models
-      </Button>
+      </Btn>
     );
   }
 
   return (
-    <Card className="border-amber-500/40 bg-amber-500/5 ring-amber-500/20">
-      <CardContent className="flex items-start gap-3">
-        <div className="mt-0.5 text-amber-500">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M12 2 1 21h22L12 2Zm0 6 7.5 13h-15L12 8Zm-1 4h2v4h-2v-4Zm0 5h2v2h-2v-2Z"
-            />
-          </svg>
+    <div className="pref-group" style={{ borderColor: "var(--color-amber)" }}>
+      <div className="pref-row" style={{ alignItems: "center" }}>
+        <div className="pref-row-label" style={{ color: "var(--color-amber-ink)" }}>
+          ⚠︎ Model mismatch
         </div>
-        <div className="flex-1 text-sm leading-relaxed">
-          <strong className="font-medium">{langName}</strong> needs the
-          multilingual model. The current model is English-only.
+        <div className="pref-row-control flex items-center justify-between gap-3">
+          <div className="text-[13px] leading-snug">
+            <strong className="font-medium">{langName}</strong> needs the
+            multilingual model — the current model is English-only.
+          </div>
+          {actionButton}
         </div>
-        {actionButton}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
