@@ -134,6 +134,13 @@ pub struct ReadVaultInput {
     pub path: String,
 }
 
+/// Placeholder input for tools that take no parameters. Forces the
+/// generated JSON Schema to be a proper `{ "type": "object", ... }`
+/// shape rather than an empty `{}` — Claude Code (and any other strict
+/// MCP client) rejects the latter as a validation failure.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct NoInput {}
+
 // ─── Tool outputs ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -316,7 +323,10 @@ impl FluisterService {
     }
 
     #[tool(description = "List the user's cleanup profiles. Returns each profile's id, name, description, and style_prompt. Use the id with clean_text to apply the profile's tone.")]
-    async fn list_profiles(&self) -> Result<CallToolResult, McpError> {
+    async fn list_profiles(
+        &self,
+        _params: rmcp::handler::server::wrapper::Parameters<NoInput>,
+    ) -> Result<CallToolResult, McpError> {
         let state = self.state();
         let rows = state.db.list_profiles().map_err(map_err)?;
         let payload: Vec<ProfileSummary> = rows.iter().map(ProfileSummary::from).collect();
@@ -324,7 +334,10 @@ impl FluisterService {
     }
 
     #[tool(description = "List the user's vocabulary entries (custom terms biased into Whisper's transcription, with phonetic aliases the model often hears instead).")]
-    async fn list_vocabulary(&self) -> Result<CallToolResult, McpError> {
+    async fn list_vocabulary(
+        &self,
+        _params: rmcp::handler::server::wrapper::Parameters<NoInput>,
+    ) -> Result<CallToolResult, McpError> {
         let state = self.state();
         let rows = state.db.list_vocabulary().map_err(map_err)?;
         let payload: Vec<VocabSummary> = rows.iter().map(VocabSummary::from).collect();
@@ -384,7 +397,14 @@ pub async fn spawn(app: AppHandle, port: u16) -> Result<ServerHandle> {
         StreamableHttpServerConfig::default(),
     );
 
-    let router = axum::Router::new().fallback_service(service);
+    // Mount only at `/mcp`. Some clients (Claude Code) probe for OAuth
+    // discovery at `/.well-known/oauth-authorization-server`; previously
+    // those probes hit StreamableHttpService and bounced back with a 406
+    // ("Accept must include application/json + text/event-stream"), which
+    // the client's OAuth parser then failed to parse as JSON. Returning a
+    // plain 404 for unrelated paths makes the client cleanly conclude
+    // "no auth required" and move on.
+    let router = axum::Router::new().nest_service("/mcp", service);
 
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();

@@ -197,7 +197,7 @@ The tool only matches the dictation text (cleaned + raw). Search is substring, c
 
 ## Architecture notes
 
-- Transport: rmcp's `StreamableHttpService`, mounted as an axum fallback route.
+- Transport: rmcp's `StreamableHttpService`, nested at `/mcp` on a tiny axum router. Other paths return 404 — keeps MCP clients' OAuth discovery probes (e.g. `/.well-known/oauth-authorization-server`) from being misrouted into the streamable-HTTP Accept-header check and bouncing back with a confusing 406.
 - Service is `Clone`-friendly and stateless except for an `AppHandle` it uses to reach the database and settings.
 - Tool dispatch is `#[tool]` macros from rmcp; input schemas are auto-derived via `schemars`.
 - The bundled `llama-server` is reused — `clean_text` is the same code path as the in-app cleanup pipeline.
