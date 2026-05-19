@@ -1,6 +1,6 @@
 [package]
 name = "fluister"
-version = "0.1.8"
+version = "0.1.9"
 description = "Voice-to-text overlay with local Whisper transcription + bundled llama-server cleanup"
 authors = ["Andre de Vries"]
 edition = "2021"
@@ -49,6 +49,17 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 # File watcher for the vault — picks up edits made externally (Obsidian, BBEdit,
 # `git pull` on a synced vault). FSEvents on macOS via the recommended backend.
 notify = "6"
+
+# Model Context Protocol server. Lets Claude Desktop / Cursor / Claude Code /
+# Zed pull dictation history, run cleanup against arbitrary text, and write
+# into the vault. Anthropic's official Rust SDK handles JSON-RPC framing and
+# the streamable-HTTP transport; axum hosts the HTTP endpoint on localhost.
+rmcp = { version = "0.6", features = ["server", "macros", "schemars", "transport-streamable-http-server"] }
+axum = "0.7"
+schemars = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # whisper-rs builds whisper.cpp through cmake + clang.
 # Metal is enabled on macOS for Apple Silicon GPU acceleration.

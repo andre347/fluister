@@ -45,6 +45,10 @@ export interface Settings {
   /** Path to the gguf model the bundled sidecar loads. Null = use the
    *  default location for the catalog's first entry. */
   llm_model_path: string | null;
+  /** When true, Fluister runs a local MCP server on 127.0.0.1:43210 so AI
+   *  clients (Claude Desktop, Cursor, Claude Code, Zed) can query
+   *  dictation history, run cleanup, and append into the vault. Opt-in. */
+  mcp_enabled: boolean;
 }
 
 export interface Profile {

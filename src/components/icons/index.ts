@@ -9,6 +9,7 @@ export { IconHotkey } from "./IconHotkey";
 export { IconStorage } from "./IconStorage";
 export { IconAbout } from "./IconAbout";
 export { IconSearch } from "./IconSearch";
+export { IconPlug } from "./IconPlug";
 export { IconPlus } from "./IconPlus";
 export { IconStar } from "./IconStar";
 export { IconCopy } from "./IconCopy";

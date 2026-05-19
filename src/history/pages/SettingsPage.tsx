@@ -14,6 +14,7 @@ import {
   IconHotkey,
   IconMic,
   IconModels,
+  IconPlug,
   IconSettings,
   IconSparkle,
   IconStorage,
@@ -24,6 +25,7 @@ import { CleanupPane } from "../panes/CleanupPane";
 import { HotkeysPane } from "../panes/HotkeysPane";
 import { ModelsPane } from "../panes/ModelsPane";
 import { StoragePane } from "../panes/StoragePane";
+import { IntegrationsPane } from "../panes/IntegrationsPane";
 import { AboutPane } from "../panes/AboutPane";
 import { cn } from "../../lib/utils";
 
@@ -34,6 +36,7 @@ type SettingsTab =
   | "hotkeys"
   | "models"
   | "storage"
+  | "integrations"
   | "about";
 
 const TABS: {
@@ -41,13 +44,14 @@ const TABS: {
   label: string;
   icon: (props: { size?: number; strokeWidth?: number }) => React.ReactNode;
 }[] = [
-  { id: "general",   label: "General",   icon: (p) => <IconSettings {...p} /> },
-  { id: "recording", label: "Recording", icon: (p) => <IconMic {...p} /> },
-  { id: "cleanup",   label: "Cleanup",   icon: (p) => <IconSparkle {...p} /> },
-  { id: "hotkeys",   label: "Hotkeys",   icon: (p) => <IconHotkey {...p} /> },
-  { id: "models",    label: "Models",    icon: (p) => <IconModels {...p} /> },
-  { id: "storage",   label: "Storage",   icon: (p) => <IconStorage {...p} /> },
-  { id: "about",     label: "About",     icon: (p) => <IconAbout {...p} /> },
+  { id: "general",      label: "General",      icon: (p) => <IconSettings {...p} /> },
+  { id: "recording",    label: "Recording",    icon: (p) => <IconMic {...p} /> },
+  { id: "cleanup",      label: "Cleanup",      icon: (p) => <IconSparkle {...p} /> },
+  { id: "hotkeys",      label: "Hotkeys",      icon: (p) => <IconHotkey {...p} /> },
+  { id: "models",       label: "Models",       icon: (p) => <IconModels {...p} /> },
+  { id: "storage",      label: "Storage",      icon: (p) => <IconStorage {...p} /> },
+  { id: "integrations", label: "Integrations", icon: (p) => <IconPlug {...p} /> },
+  { id: "about",        label: "About",        icon: (p) => <IconAbout {...p} /> },
 ];
 
 const TAB_TITLE: Record<SettingsTab, string> = {
@@ -57,6 +61,7 @@ const TAB_TITLE: Record<SettingsTab, string> = {
   hotkeys: "Hotkeys",
   models: "Models",
   storage: "Storage",
+  integrations: "Integrations",
   about: "About",
 };
 
@@ -276,6 +281,12 @@ export function SettingsPage() {
                 />
               )}
               {tab === "storage" && <StoragePane />}
+              {tab === "integrations" && (
+                <IntegrationsPane
+                  settings={settings}
+                  updateSettings={updateSettings}
+                />
+              )}
               {tab === "about" && <AboutPane />}
             </>
           ) : (

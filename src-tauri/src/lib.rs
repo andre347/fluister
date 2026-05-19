@@ -20,6 +20,7 @@ mod llama_server;
 mod llm;
 mod llm_download;
 mod llm_prompt;
+mod mcp;
 mod model_download;
 mod ollama;
 mod paste;
@@ -85,6 +86,11 @@ pub struct Settings {
     /// = use the default download location for the catalog's first entry.
     #[serde(default)]
     pub llm_model_path: Option<String>,
+    /// When `true`, Fluister exposes its dictation history, cleanup pipeline,
+    /// and vault to AI clients over a local MCP server on 127.0.0.1. Default
+    /// false — opt-in only.
+    #[serde(default)]
+    pub mcp_enabled: bool,
 }
 
 fn default_ollama_model() -> String {
@@ -136,6 +142,7 @@ impl Default for Settings {
             vault_path: None,
             llm_backend: default_llm_backend(),
             llm_model_path: None,
+            mcp_enabled: false,
         }
     }
 }
@@ -165,6 +172,10 @@ struct AppState {
     /// Live vault watcher, present iff `Settings.vault_path` is set.
     /// Dropped to stop watching when the user disables the vault.
     vault_watcher: Arc<Mutex<Option<vault_watcher::VaultWatcher>>>,
+    /// MCP HTTP server handle. Some when `Settings.mcp_enabled` is true and
+    /// the server is bound; None otherwise. `tokio::sync::Mutex` because the
+    /// shutdown path awaits the join handle.
+    mcp_server: Arc<tokio::sync::Mutex<Option<mcp::ServerHandle>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1246,6 +1257,7 @@ fn update_settings(
     }
     save_settings(&state.db, &settings).map_err(|e| e.to_string())?;
     let position_changed;
+    let mcp_changed;
     {
         let mut current = state.settings.lock();
         // If the whisper model path changed, drop the cached transcriber so
@@ -1254,13 +1266,48 @@ fn update_settings(
             *state.whisper.lock() = None;
         }
         position_changed = current.overlay_position != settings.overlay_position;
+        mcp_changed = current.mcp_enabled != settings.mcp_enabled;
         *current = settings;
     }
     if position_changed {
         let preview_app = app.clone();
         tauri::async_runtime::spawn(async move { preview_overlay(preview_app).await });
     }
+    if mcp_changed {
+        // Defer the start/stop to a tokio task so we don't block the
+        // settings save on the HTTP server's bind/drain.
+        let mcp_app = app.clone();
+        tauri::async_runtime::spawn(async move { sync_mcp_to_settings(mcp_app).await });
+    }
     Ok(())
+}
+
+/// Reconcile the MCP server state with `Settings.mcp_enabled`. Idempotent:
+/// running + enabled = no-op, stopped + disabled = no-op. Used by the
+/// `update_settings` handler and the explicit `set_mcp_enabled` command.
+async fn sync_mcp_to_settings(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let enabled = state.settings.lock().mcp_enabled;
+    let mut slot = state.mcp_server.lock().await;
+    match (enabled, slot.take()) {
+        (true, None) => match mcp::spawn(app.clone(), mcp::DEFAULT_PORT).await {
+            Ok(handle) => *slot = Some(handle),
+            Err(e) => log::error!("mcp: spawn failed: {e:?}"),
+        },
+        (false, Some(handle)) => {
+            drop(slot); // release before awaiting on the handle
+            handle.shutdown().await;
+            // Re-lock to leave the slot None (it already is post-take()).
+            let _ = state.mcp_server.lock().await;
+        }
+        (true, Some(handle)) => {
+            // Already running — keep it.
+            *slot = Some(handle);
+        }
+        (false, None) => {
+            // Already stopped — nothing to do.
+        }
+    }
 }
 
 // ─── Vault setup ────────────────────────────────────────────────────────────
@@ -1542,7 +1589,7 @@ fn list_vocabulary(state: State<'_, AppState>) -> Result<Vec<db::VocabularyEntry
 /// Vocabulary lives in a single Markdown table (Global.md) so every change
 /// rewrites the file from the post-mutation SQLite list — there's no
 /// per-entry file to selectively update.
-fn vault_sync_vocabulary(state: &AppState) {
+pub(crate) fn vault_sync_vocabulary(state: &AppState) {
     let Some(root) = vault_root(state) else {
         return;
     };
@@ -1986,6 +2033,7 @@ pub fn run() {
             recording_started_at: Arc::new(Mutex::new(None)),
             last_external_app: Arc::new(Mutex::new(None)),
             vault_watcher: Arc::new(Mutex::new(None)),
+            mcp_server: Arc::new(tokio::sync::Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
             list_dictations,
@@ -2143,6 +2191,67 @@ pub fn run() {
             // of RAM forever.
             llama_server::install_idle_watchdog();
 
+            // MCP server — opt-in via Settings. Start it now if the user
+            // had it enabled last session; the Settings UI toggles it on
+            // and off at runtime via update_settings → sync_mcp_to_settings.
+            let mcp_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = mcp_app.state::<AppState>();
+                let enabled = state.settings.lock().mcp_enabled;
+                if !enabled {
+                    return;
+                }
+                match mcp::spawn(mcp_app.clone(), mcp::DEFAULT_PORT).await {
+                    Ok(handle) => {
+                        let mut slot = state.mcp_server.lock().await;
+                        *slot = Some(handle);
+                    }
+                    Err(e) => {
+                        log::error!("mcp: failed to start: {e:?}");
+                    }
+                }
+            });
+
+            // Pre-warm the cleanup model after a short delay so the very
+            // first dictation of the session doesn't pay the ~5 s cold
+            // start. We deliberately wait 4 seconds:
+            //   - lets the UI render and Whisper's lazy init finish first,
+            //     so we don't compete for Metal at startup;
+            //   - long enough that a user who's just launching Fluister to
+            //     check Settings doesn't pay any model-load cost.
+            // Combined with the IDLE_TIMEOUT bump to 60 min in
+            // llama_server.rs, this turns cold-start into a once-per-launch
+            // event instead of once-per-coffee-break.
+            let prewarm_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                let state = prewarm_app.state::<AppState>();
+                let (enabled, backend, model_path) = {
+                    let s = state.settings.lock();
+                    (
+                        s.cleanup_enabled,
+                        s.llm_backend.clone(),
+                        s.llm_model_path
+                            .as_ref()
+                            .map(PathBuf::from)
+                            .unwrap_or_else(llm_download::default_model_path),
+                    )
+                };
+                if !enabled || backend != llm::BACKEND_BUNDLED {
+                    return;
+                }
+                if !model_path.exists() {
+                    // Brand-new user without the model downloaded yet.
+                    // Pre-warm is a no-op; the first cleanup attempt will
+                    // surface a helpful "download me" error instead.
+                    return;
+                }
+                match llama_server::ensure_running(&prewarm_app, &model_path).await {
+                    Ok(_) => log::info!("cleanup model pre-warmed"),
+                    Err(e) => log::warn!("cleanup pre-warm failed (will retry on first cleanup): {e:?}"),
+                }
+            });
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -2164,6 +2273,17 @@ pub fn run() {
                     // SIGTERM the bundled sidecar so it doesn't outlive
                     // the parent and squat on RAM. Falls back to SIGKILL.
                     llama_server::shutdown_blocking();
+
+                    // Drain the MCP server too. Use the app handle's runtime
+                    // to await the join handle synchronously from this
+                    // not-async context.
+                    let state = app.state::<AppState>();
+                    let server_slot = state.mcp_server.clone();
+                    tauri::async_runtime::block_on(async move {
+                        if let Some(handle) = server_slot.lock().await.take() {
+                            handle.shutdown().await;
+                        }
+                    });
                 }
                 _ => {}
             }

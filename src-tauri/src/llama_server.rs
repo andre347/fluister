@@ -23,7 +23,13 @@ use tokio::time::sleep;
 const SIDECAR_BINARY: &str = "llama-server";
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+// A loaded llama-3.2-3B sits at ~2 GB resident — fine on Apple Silicon
+// dictation rigs (16 GB minimum target). Keeping the sidecar warm for an
+// hour after the last cleanup avoids the ~5 s cold-start hit on every
+// dictation after a meeting or lunch break. Combined with the pre-warm
+// task in lib.rs's setup() callback, the user sees a cold start only the
+// first time Fluister itself launches.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const IDLE_TICK: Duration = Duration::from_secs(60);
 const SIGTERM_GRACE: Duration = Duration::from_secs(2);
 const CHAT_TIMEOUT: Duration = Duration::from_secs(120);
