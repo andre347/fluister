@@ -81,6 +81,9 @@ export type MicStatus =
 export interface OnboardingStatus {
   microphone: MicStatus;
   accessibility: boolean;
+  /** True when Fluister has Input Monitoring permission. Required for the
+   *  global hotkey to fire when another app is focused. */
+  input_monitoring: boolean;
   has_whisper_model: boolean;
   /** True when the bundled cleanup model gguf is present on disk. */
   has_llm_model: boolean;
@@ -167,7 +170,7 @@ interface ListDictationsArgs {
   search?: string | null;
 }
 
-type PrivacyPanel = "microphone" | "accessibility";
+type PrivacyPanel = "microphone" | "accessibility" | "input-monitoring";
 
 export const commands = {
   // Dictations
@@ -188,6 +191,8 @@ export const commands = {
   showOnboardingWindow: () => invoke<void>("show_onboarding_window"),
   requestMicrophoneAccess: () =>
     invoke<MicStatus>("request_microphone_access"),
+  requestInputMonitoringAccess: () =>
+    invoke<boolean>("request_input_monitoring_access"),
   openPrivacyPanel: (panel: PrivacyPanel) =>
     invoke<void>("open_privacy_panel", { panel }),
   openExternalUrl: (url: string) =>

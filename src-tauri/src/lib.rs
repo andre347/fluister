@@ -292,7 +292,13 @@ fn reconcile_vault_into_db(
                 // Vault profiles don't carry app_bindings yet — those live
                 // only in the local SQLite cache. Pass an empty slice; the
                 // user can re-bind apps after the row lands.
-                database.create_profile_with_ulid(
+                //
+                // If the insert fails (most commonly the UNIQUE constraint
+                // on `profiles.name` when the vault has two profile files
+                // sharing the same display name with different ULIDs),
+                // skip the offending profile and continue. One malformed
+                // file shouldn't block first-launch onboarding.
+                if let Err(e) = database.create_profile_with_ulid(
                     &ulid_str,
                     &vp.name,
                     &vp.description,
@@ -300,7 +306,13 @@ fn reconcile_vault_into_db(
                     &vp.vocabulary,
                     &[],
                     created,
-                )?;
+                ) {
+                    log::warn!(
+                        "vault reconcile: skipping profile '{}' (ulid {}): {e}",
+                        vp.name,
+                        ulid_str
+                    );
+                }
             }
         }
     }
@@ -341,12 +353,18 @@ fn reconcile_vault_into_db(
             Some(_) => database.update_vocab_by_ulid(&ulid_str, &vv.term, &vv.aliases)?,
             None => {
                 let created = vv.created_at.timestamp_millis();
-                database.create_vocabulary_entry_with_ulid(
+                if let Err(e) = database.create_vocabulary_entry_with_ulid(
                     &ulid_str,
                     &vv.term,
                     &vv.aliases,
                     created,
-                )?;
+                ) {
+                    log::warn!(
+                        "vault reconcile: skipping vocab term '{}' (ulid {}): {e}",
+                        vv.term,
+                        ulid_str
+                    );
+                }
             }
         };
     }
@@ -1021,6 +1039,10 @@ fn set_active_llm_model(
 struct OnboardingStatus {
     microphone: permissions::MicStatus,
     accessibility: bool,
+    /// True when Fluister has Input Monitoring permission. Required for
+    /// the CGEventTap to receive Right-Option events while another app is
+    /// focused. Separate macOS TCC service from Accessibility.
+    input_monitoring: bool,
     has_whisper_model: bool,
     /// True when the bundled cleanup model gguf is present on disk.
     has_llm_model: bool,
@@ -1036,6 +1058,7 @@ struct OnboardingStatus {
 async fn onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatus, String> {
     let microphone = permissions::microphone_status();
     let accessibility = permissions::accessibility_granted();
+    let input_monitoring = permissions::input_monitoring_granted();
     let (onboarding_complete, active_path, llm_path) = {
         let s = state.settings.lock();
         (
@@ -1060,6 +1083,7 @@ async fn onboarding_status(state: State<'_, AppState>) -> Result<OnboardingStatu
     Ok(OnboardingStatus {
         microphone,
         accessibility,
+        input_monitoring,
         has_whisper_model,
         has_llm_model,
         ollama_running,
@@ -1073,6 +1097,16 @@ async fn request_microphone_access() -> Result<permissions::MicStatus, String> {
     tokio::task::spawn_blocking(|| {
         permissions::request_microphone();
         permissions::microphone_status()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn request_input_monitoring_access() -> Result<bool, String> {
+    tokio::task::spawn_blocking(|| {
+        permissions::request_input_monitoring();
+        permissions::input_monitoring_granted()
     })
     .await
     .map_err(|e| e.to_string())
@@ -1971,6 +2005,7 @@ pub fn run() {
             app_version,
             onboarding_status,
             request_microphone_access,
+            request_input_monitoring_access,
             open_privacy_panel,
             open_external_url,
             finish_onboarding,

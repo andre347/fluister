@@ -1,7 +1,7 @@
 {
   "name": "fluister",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "homepage": "https://fluister-web.vercel.app",
   "type": "module",
   "scripts": {

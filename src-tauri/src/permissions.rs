@@ -9,11 +9,40 @@ unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
 }
 
+#[link(name = "IOKit", kind = "framework")]
+unsafe extern "C" {
+    fn IOHIDCheckAccess(request_type: u32) -> u32;
+    fn IOHIDRequestAccess(request_type: u32) -> bool;
+}
+
+/// `kIOHIDRequestTypeListenEvent` from `IOHIDKeys.h` — the value we pass to
+/// IOHIDCheckAccess to query Input Monitoring permission.
+const IOHID_REQUEST_TYPE_LISTEN_EVENT: u32 = 1;
+/// `kIOHIDAccessTypeGranted` — IOHIDCheckAccess returns this when the user
+/// has approved the app in System Settings → Privacy & Security → Input
+/// Monitoring.
+const IOHID_ACCESS_TYPE_GRANTED: u32 = 0;
+
 /// `true` when the binary is in System Settings → Privacy & Security →
 /// Accessibility *and* enabled. Required for the global hotkey CGEventTap
 /// and for synthesising ⌘V on paste.
 pub fn accessibility_granted() -> bool {
     unsafe { AXIsProcessTrusted() }
+}
+
+/// `true` when the binary is in System Settings → Privacy & Security →
+/// Input Monitoring *and* enabled. Required for the hotkey's CGEventTap
+/// to receive Right-Option events while another app is focused. Without
+/// this, events only flow when Fluister itself has focus.
+pub fn input_monitoring_granted() -> bool {
+    unsafe { IOHIDCheckAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) == IOHID_ACCESS_TYPE_GRANTED }
+}
+
+/// Triggers macOS's Input Monitoring authorization prompt the first time
+/// it's called for this binary. Subsequent calls return the cached
+/// decision without re-prompting.
+pub fn request_input_monitoring() -> bool {
+    unsafe { IOHIDRequestAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -103,8 +132,9 @@ pub fn request_microphone() {
 /// Opens a specific Privacy & Security panel in System Settings.
 pub fn open_privacy_panel(panel: &str) -> std::io::Result<()> {
     let url = match panel {
-        "microphone"    => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-        "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "microphone"       => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        "accessibility"    => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "input-monitoring" => "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
         _ => "x-apple.systempreferences:com.apple.preference.security",
     };
     std::process::Command::new("open").arg(url).spawn().map(|_| ())

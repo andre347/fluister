@@ -269,6 +269,22 @@ export function App() {
     commands.openPrivacyPanel("accessibility").catch(() => {});
   }, []);
 
+  const handleGrantInputMonitoring = useCallback(async () => {
+    // IOHIDRequestAccess shows the system prompt the first time it's
+    // called. If the user has already denied, the call is a no-op and
+    // we open System Settings to let them flip the toggle manually.
+    try {
+      await commands.requestInputMonitoringAccess();
+    } catch (err) {
+      console.error(err);
+    }
+    setRefreshTick((n) => n + 1);
+    const fresh = await commands.onboardingStatus().catch(() => null);
+    if (fresh && !fresh.input_monitoring) {
+      await commands.openPrivacyPanel("input-monitoring").catch(() => {});
+    }
+  }, []);
+
   const handleLanguageChange = useCallback(async (newLang: string) => {
     setLanguage(newLang);
     try {
@@ -364,7 +380,10 @@ export function App() {
   // ─── Render ─────────────────────────────────────────────────────────────
 
   const permsReady =
-    !!status && status.microphone === "authorized" && status.accessibility;
+    !!status
+    && status.microphone === "authorized"
+    && status.accessibility
+    && status.input_monitoring;
 
   return (
     <div className="ob-shell">
@@ -395,6 +414,7 @@ export function App() {
             micRequesting={micRequesting}
             onGrantMic={handleGrantMic}
             onOpenAccessibility={handleOpenAccessibility}
+            onGrantInputMonitoring={handleGrantInputMonitoring}
           />
         )}
         {step === 1 && (
@@ -557,19 +577,22 @@ function PermissionsStep({
   micRequesting,
   onGrantMic,
   onOpenAccessibility,
+  onGrantInputMonitoring,
 }: {
   status: OnboardingStatus | null;
   micRequesting: boolean;
   onGrantMic: () => void;
   onOpenAccessibility: () => void;
+  onGrantInputMonitoring: () => void;
 }) {
   const micGranted = status?.microphone === "authorized";
   const a11yGranted = !!status?.accessibility;
+  const inputMonitoringGranted = !!status?.input_monitoring;
 
   return (
     <StepLayout
       title="Grant a few permissions"
-      subtitle="Fluister needs the microphone to capture audio and accessibility access for the global hotkey + paste."
+      subtitle="Fluister needs the microphone to capture audio, accessibility for synthetic ⌘V paste, and input monitoring so the global hotkey works while you're in other apps."
     >
       <div className="ob-perm-grid">
         <PermCard
@@ -584,10 +607,17 @@ function PermissionsStep({
         />
         <PermCard
           title="Accessibility"
-          description="For the Right ⌥ hotkey and synthetic ⌘V paste."
+          description="For pasting transcriptions via synthetic ⌘V."
           granted={a11yGranted}
           actionLabel="Open Settings"
           onAction={onOpenAccessibility}
+        />
+        <PermCard
+          title="Input Monitoring"
+          description="So the Right ⌥ hotkey fires in any app, not just Fluister."
+          granted={inputMonitoringGranted}
+          actionLabel="Open Settings"
+          onAction={onGrantInputMonitoring}
         />
       </div>
     </StepLayout>
