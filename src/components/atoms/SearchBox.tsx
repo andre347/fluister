@@ -20,7 +20,7 @@ export const SearchBox = forwardRef<HTMLInputElement, SearchBoxProps>(
   ) {
     return (
       <div
-        className="inline-flex items-center gap-1.5 h-[26px] px-[9px] bg-white border-[0.5px] border-hair-strong rounded-ctl shadow-[0_1px_0_rgba(0,0,0,0.02)_inset]"
+        className="inline-flex items-center gap-1.5 h-[26px] px-[9px] bg-input-surface border-[0.5px] border-hair-strong rounded-ctl shadow-[0_1px_0_rgba(0,0,0,0.02)_inset]"
         style={{ width }}
       >
         <IconSearch size={13} color="var(--color-ink-3)" strokeWidth={1.7} />

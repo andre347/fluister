@@ -361,7 +361,7 @@ function VocabRow({ entry, flashed, onAliasesChange, onDelete }: RowProps) {
               }
             }}
             placeholder="alias"
-            className="bg-white border-[0.5px] border-amber-ink px-1.5 py-px rounded-[4px] font-fl-mono text-[11px] text-ink outline-none w-[120px]"
+            className="bg-input-surface border-[0.5px] border-amber-ink px-1.5 py-px rounded-[4px] font-fl-mono text-[11px] text-ink outline-none w-[120px]"
           />
         ) : (
           <button

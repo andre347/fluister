@@ -64,7 +64,7 @@ export function RecordingPane({
           <select
             value={settings.language}
             onChange={(e) => updateSettings({ language: e.target.value })}
-            className="h-[26px] rounded-[5px] border-[0.5px] border-hair-strong bg-white text-ink text-[13px] px-2 pr-7"
+            className="h-[26px] rounded-[5px] border-[0.5px] border-hair-strong bg-input-surface text-ink text-[13px] px-2 pr-7"
           >
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>

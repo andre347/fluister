@@ -100,7 +100,7 @@ export function HistoryListPane({
       className="flex flex-col flex-shrink-0 border-r-[0.5px] border-hair overflow-hidden"
       style={{ width: 360, background: "var(--color-list-bg)" }}
     >
-      <div className="sticky top-0 z-[1] flex items-center justify-between gap-3 px-4 py-2.5 border-b-[0.5px] border-hair bg-[rgba(252,252,250,0.85)] backdrop-blur-xl">
+      <div className="sticky top-0 z-[1] flex items-center justify-between gap-3 px-4 py-2.5 border-b-[0.5px] border-hair bg-list-bg/85 backdrop-blur-xl">
         <span className="text-[12px] text-ink-2">{totalLabel}</span>
         <Segmented
           options={MODE_OPTIONS}

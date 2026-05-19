@@ -4,10 +4,18 @@ import {
   ArrowRight,
   Check,
   ChevronLeft,
+  Eye,
   FolderOpen,
   HardDrive,
+  Keyboard,
+  Mic,
   Sparkles,
 } from "lucide-react";
+
+// Tiny icon wrappers so the permission row markup stays self-documenting.
+const MicIcon = () => <Mic size={18} strokeWidth={1.6} aria-hidden />;
+const KeyboardIcon = () => <Keyboard size={18} strokeWidth={1.6} aria-hidden />;
+const EyeIcon = () => <Eye size={18} strokeWidth={1.6} aria-hidden />;
 import {
   commands,
   type DownloadProgress,
@@ -19,6 +27,7 @@ import {
   type ModelDownloadFailed,
   type ModelInfo,
   type OnboardingStatus,
+  type OverlayPosition,
   type VaultStatus,
 } from "../lib/tauri";
 import {
@@ -32,14 +41,15 @@ import { cn } from "../lib/utils";
 
 const STATUS_POLL_MS = 1500;
 
-type StepId = 0 | 1 | 2 | 3 | 4;
+type StepId = 0 | 1 | 2 | 3 | 4 | 5;
 
 const STEPS: { id: StepId; label: string }[] = [
   { id: 0, label: "Permissions" },
-  { id: 1, label: "Model" },
-  { id: 2, label: "AI cleanup" },
-  { id: 3, label: "Storage" },
-  { id: 4, label: "Done" },
+  { id: 1, label: "Overlay" },
+  { id: 2, label: "Model" },
+  { id: 3, label: "AI cleanup" },
+  { id: 4, label: "Storage" },
+  { id: 5, label: "Done" },
 ];
 
 type ModelSize = "tiny" | "base" | "small" | "medium";
@@ -173,7 +183,7 @@ export function App() {
     }
     setRefreshTick((n) => n + 1);
     // Auto-advance once the chosen model is in.
-    setStep((s) => (s === 1 ? 2 : s));
+    setStep((s) => (s === 2 ? 3 : s));
   });
 
   useTauriEvent<ModelDownloadFailed>("model-download-failed", (e) => {
@@ -212,7 +222,7 @@ export function App() {
     }
     setRefreshTick((n) => n + 1);
     // Auto-advance once the model is ready.
-    setStep((s) => (s === 2 ? 3 : s));
+    setStep((s) => (s === 3 ? 4 : s));
   });
 
   useTauriEvent<LlmDownloadFailed>("llm-download-failed", (e) => {
@@ -282,6 +292,18 @@ export function App() {
     const fresh = await commands.onboardingStatus().catch(() => null);
     if (fresh && !fresh.input_monitoring) {
       await commands.openPrivacyPanel("input-monitoring").catch(() => {});
+    }
+  }, []);
+
+  const handleOverlayPositionChange = useCallback(async (next: OverlayPosition) => {
+    try {
+      const current = await commands.getSettings();
+      // The Rust update_settings handler emits a brief preview of the pill
+      // at the new position automatically, so the user gets immediate
+      // feedback without us having to wire the preview event manually.
+      await commands.updateSettings({ ...current, overlay_position: next });
+    } catch (err) {
+      console.error("update_settings (overlay_position) failed", err);
     }
   }, []);
 
@@ -370,7 +392,7 @@ export function App() {
   }, [handleSetVault]);
 
   const goNext = useCallback(() => {
-    setStep((s) => (s < 4 ? ((s + 1) as StepId) : s));
+    setStep((s) => (s < 5 ? ((s + 1) as StepId) : s));
   }, []);
 
   const goBack = useCallback(() => {
@@ -417,7 +439,8 @@ export function App() {
             onGrantInputMonitoring={handleGrantInputMonitoring}
           />
         )}
-        {step === 1 && (
+        {step === 1 && <OverlayStep onChange={handleOverlayPositionChange} />}
+        {step === 2 && (
           <ModelStep
             pickedSize={pickedSize}
             onPick={setPickedSize}
@@ -428,7 +451,7 @@ export function App() {
             targetInstalled={targetInstalled}
           />
         )}
-        {step === 2 && (
+        {step === 3 && (
           <LlmStep
             llmModels={llmModels}
             llmHasModel={!!status?.has_llm_model}
@@ -441,7 +464,7 @@ export function App() {
             onUnskip={() => setLlmSkipped(false)}
           />
         )}
-        {step === 3 && (
+        {step === 4 && (
           <StorageStep
             status={vaultStatus}
             defaultPath={vaultDefault}
@@ -456,7 +479,7 @@ export function App() {
             onUnskip={() => setVaultSkipped(false)}
           />
         )}
-        {step === 4 && (
+        {step === 5 && (
           <DoneStep
             language={language}
             activeWhisper={activeWhisper}
@@ -472,7 +495,7 @@ export function App() {
           step {step + 1} of {STEPS.length}
         </span>
         <div className="ob-footer-actions">
-          {step > 0 && step < 4 && (
+          {step > 0 && step < 5 && (
             <Button variant="ghost" size="sm" onClick={goBack} className="h-9 px-4 gap-1.5">
               <ChevronLeft size={14} aria-hidden />
               <span>Back</span>
@@ -490,6 +513,12 @@ export function App() {
             </Button>
           )}
           {step === 1 && (
+            <Button size="sm" onClick={goNext} className="h-9 px-4 gap-1.5">
+              <span>Continue</span>
+              <ArrowRight size={14} aria-hidden />
+            </Button>
+          )}
+          {step === 2 && (
             targetInstalled ? (
               <Button
                 size="sm"
@@ -520,7 +549,7 @@ export function App() {
               </Button>
             )
           )}
-          {step === 2 && (
+          {step === 3 && (
             status?.has_llm_model || llmSkipped ? (
               <Button
                 size="sm"
@@ -548,7 +577,7 @@ export function App() {
               </Button>
             )
           )}
-          {step === 3 && (
+          {step === 4 && (
             <Button
               size="sm"
               onClick={goNext}
@@ -559,7 +588,7 @@ export function App() {
               <ArrowRight size={14} aria-hidden />
             </Button>
           )}
-          {step === 4 && (
+          {step === 5 && (
             <Button size="sm" onClick={handleFinish} className="h-9 px-5">
               Start dictating
             </Button>
@@ -594,8 +623,9 @@ function PermissionsStep({
       title="Grant a few permissions"
       subtitle="Fluister needs the microphone to capture audio, accessibility for synthetic ⌘V paste, and input monitoring so the global hotkey works while you're in other apps."
     >
-      <div className="ob-perm-grid">
+      <div className="ob-perm-list">
         <PermCard
+          icon={<MicIcon />}
           title="Microphone"
           description="So Fluister can record what you say."
           granted={micGranted}
@@ -606,6 +636,7 @@ function PermissionsStep({
           onAction={onGrantMic}
         />
         <PermCard
+          icon={<KeyboardIcon />}
           title="Accessibility"
           description="For pasting transcriptions via synthetic ⌘V."
           granted={a11yGranted}
@@ -613,8 +644,9 @@ function PermissionsStep({
           onAction={onOpenAccessibility}
         />
         <PermCard
+          icon={<EyeIcon />}
           title="Input Monitoring"
-          description="So the Right ⌥ hotkey fires in any app, not just Fluister."
+          description="So the Right ⌥ hotkey fires anywhere, not just in Fluister."
           granted={inputMonitoringGranted}
           actionLabel="Open Settings"
           onAction={onGrantInputMonitoring}
@@ -625,6 +657,7 @@ function PermissionsStep({
 }
 
 function PermCard({
+  icon,
   title,
   description,
   granted,
@@ -632,6 +665,7 @@ function PermCard({
   actionDisabled,
   onAction,
 }: {
+  icon: React.ReactNode;
   title: string;
   description: string;
   granted: boolean;
@@ -640,43 +674,110 @@ function PermCard({
   onAction: () => void;
 }) {
   return (
-    <div className={cn("ob-perm-card", granted && "ob-perm-card-granted")}>
-      <div className="flex items-center justify-between gap-3 mb-1.5">
-        <div className="text-body font-semibold text-foreground">{title}</div>
-        <span
-          className={cn(
-            "text-tag font-medium uppercase tracking-wider",
-            granted ? "text-[color:var(--color-success)]" : "text-faint",
-          )}
-        >
-          {granted ? "Granted" : "Not granted"}
+    <div className={cn("ob-perm-row", granted && "ob-perm-row-granted")}>
+      <div className="ob-perm-row-icon" aria-hidden>
+        {icon}
+      </div>
+      <div className="ob-perm-row-text">
+        <div className="ob-perm-row-title">{title}</div>
+        <div className="ob-perm-row-desc">{description}</div>
+      </div>
+      <div className="ob-perm-row-status">
+        {granted ? (
+          <span className="ob-perm-pill ob-perm-pill-granted">
+            <Check size={11} strokeWidth={2.5} aria-hidden />
+            Granted
+          </span>
+        ) : (
+          <span className="ob-perm-pill ob-perm-pill-pending">
+            Not granted
+          </span>
+        )}
+      </div>
+      <div className="ob-perm-row-action">
+        {!granted && (
+          <Button
+            variant="default"
+            size="sm"
+            onClick={onAction}
+            disabled={actionDisabled}
+            className="h-7 px-3"
+          >
+            {actionLabel}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const OVERLAY_POSITIONS: { value: OverlayPosition; row: 0 | 1; col: 0 | 1 | 2; label: string }[] = [
+  { value: "top-left", row: 0, col: 0, label: "Top left" },
+  { value: "top-center", row: 0, col: 1, label: "Top center" },
+  { value: "top-right", row: 0, col: 2, label: "Top right" },
+  { value: "bottom-left", row: 1, col: 0, label: "Bottom left" },
+  { value: "bottom-center", row: 1, col: 1, label: "Bottom center" },
+  { value: "bottom-right", row: 1, col: 2, label: "Bottom right" },
+];
+
+function OverlayStep({ onChange }: { onChange: (next: OverlayPosition) => void }) {
+  const [selected, setSelected] = useState<OverlayPosition>("bottom-right");
+
+  // Snap the saved value to "bottom-right" on first mount but also seed
+  // from settings so re-entering the step shows whatever the user last
+  // picked. update_settings on the Rust side will flash a preview, so
+  // we don't need to do anything else.
+  useEffect(() => {
+    let cancelled = false;
+    commands.getSettings().then((s) => {
+      if (cancelled) return;
+      setSelected(s.overlay_position);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const pick = useCallback((value: OverlayPosition) => {
+    setSelected(value);
+    onChange(value);
+  }, [onChange]);
+
+  return (
+    <StepLayout
+      title="Where should the recording pill appear?"
+      subtitle="A small floating pill shows up while you dictate. Pick a corner — you can change it later in Settings."
+    >
+      <div
+        role="radiogroup"
+        aria-label="Overlay position"
+        className="ob-overlay-screen"
+      >
+        {OVERLAY_POSITIONS.map((p) => {
+          const active = selected === p.value;
+          return (
+            <button
+              key={p.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              aria-label={p.label}
+              onClick={() => pick(p.value)}
+              className={cn("ob-overlay-dot", active && "ob-overlay-dot-active")}
+              style={{
+                gridRow: p.row + 1,
+                gridColumn: p.col + 1,
+              }}
+            >
+              <span className="ob-overlay-pill" />
+            </button>
+          );
+        })}
+      </div>
+      <div className="text-footnote text-text-muted text-center">
+        Selected: <span className="text-foreground font-medium">
+          {OVERLAY_POSITIONS.find((p) => p.value === selected)?.label}
         </span>
       </div>
-      <p className="text-footnote text-text-muted leading-snug mb-4">
-        {description}
-      </p>
-      {granted ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled
-          className="h-8 w-full pointer-events-none gap-1.5"
-        >
-          <Check size={13} aria-hidden />
-          <span>Done</span>
-        </Button>
-      ) : (
-        <Button
-          variant="default"
-          size="sm"
-          onClick={onAction}
-          disabled={actionDisabled}
-          className="h-8 w-full"
-        >
-          {actionLabel}
-        </Button>
-      )}
-    </div>
+    </StepLayout>
   );
 }
 

@@ -76,27 +76,31 @@
      `rounded-card`, `font-sf` line up with the design source. These are
      intentionally separate from the shadcn-bridged tokens above so the
      two layers don't collide. */
-  --color-window-bg:       #FAFAF7;
-  --color-sidebar-bg:      rgba(245, 245, 242, 0.72);
-  --color-sheet-bg:        #FFFFFF;
-  --color-fl-hover:        rgba(0, 0, 0, 0.04);
-  --color-selection:       rgba(232, 169, 97, 0.16);
-  --color-selection-strong: rgba(232, 169, 97, 0.28);
-  --color-fill:            #F2F2EF;
+  --color-window-bg:        light-dark(#FAFAF7, #1c1c1e);
+  --color-sidebar-bg:       light-dark(rgba(245, 245, 242, 0.72), rgba(28, 28, 30, 0.72));
+  --color-sheet-bg:         light-dark(#FFFFFF, #242427);
+  /* Surface for form inputs (text fields, search boxes, selects, picker
+     chips). White in light mode, slightly raised neutral in dark. Pair it
+     with `border-hair-strong` to get a consistent "input chrome" look. */
+  --color-input-surface:    light-dark(#FFFFFF, #2e2e33);
+  --color-fl-hover:         light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.06));
+  --color-selection:        light-dark(rgba(232, 169, 97, 0.16), rgba(242, 181, 112, 0.22));
+  --color-selection-strong: light-dark(rgba(232, 169, 97, 0.28), rgba(242, 181, 112, 0.32));
+  --color-fill:             light-dark(#F2F2EF, rgba(255, 255, 255, 0.06));
 
-  --color-ink:         #1d1d1f;
-  --color-ink-2:       #3c3c43cc;
-  --color-ink-3:       #3c3c4399;
-  --color-ink-4:       #3c3c4366;
-  --color-ink-inverse: #ffffff;
+  --color-ink:         light-dark(#1d1d1f, #f5f5f7);
+  --color-ink-2:       light-dark(rgba(60, 60, 67, 0.8), rgba(235, 235, 245, 0.7));
+  --color-ink-3:       light-dark(rgba(60, 60, 67, 0.6), rgba(235, 235, 245, 0.5));
+  --color-ink-4:       light-dark(rgba(60, 60, 67, 0.4), rgba(235, 235, 245, 0.3));
+  --color-ink-inverse: light-dark(#ffffff, #1d1d1f);
 
-  --color-hair:        rgba(0, 0, 0, 0.08);
-  --color-hair-strong: rgba(0, 0, 0, 0.14);
+  --color-hair:        light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.10));
+  --color-hair-strong: light-dark(rgba(0, 0, 0, 0.14), rgba(255, 255, 255, 0.18));
 
   --color-amber:      #E8A961;
-  --color-amber-ink:  #B27A30;
-  --color-amber-tint: #F8E9CF;
-  --color-amber-soft: rgba(232, 169, 97, 0.06);
+  --color-amber-ink:  light-dark(#B27A30, #F2B570);
+  --color-amber-tint: light-dark(#F8E9CF, rgba(232, 169, 97, 0.22));
+  --color-amber-soft: light-dark(rgba(232, 169, 97, 0.06), rgba(232, 169, 97, 0.10));
   --color-red:        #FF3B30;
   --color-fl-green:   #34C759;
   --color-fl-blue:    #0A84FF;
@@ -105,8 +109,8 @@
   /* Surface variants — used in the History list pane and the Vocabulary
      table chrome (the "header" / "footer" bands a touch darker than the
      window background). */
-  --color-list-bg:         #FCFCFA;
-  --color-table-header-bg: #F7F7F4;
+  --color-list-bg:         light-dark(#FCFCFA, #1f1f22);
+  --color-table-header-bg: light-dark(#F7F7F4, #25252a);
 
   /* Per-profile dot colors. Mapped from profile name in code (slack →
      profile-slack, etc.) since `db::Profile` has no dot_color column.

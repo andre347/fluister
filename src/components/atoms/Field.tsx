@@ -24,7 +24,7 @@ interface MultiLine extends FieldBase {
 type FieldProps = SingleLine | MultiLine;
 
 const baseClasses =
-  "w-full text-ink bg-white border-[0.5px] border-hair-strong rounded-ctl shadow-[0_1px_0_rgba(0,0,0,0.02)_inset] outline-none box-border resize-none leading-[1.5]";
+  "w-full text-ink bg-input-surface border-[0.5px] border-hair-strong rounded-ctl shadow-[0_1px_0_rgba(0,0,0,0.02)_inset] outline-none box-border resize-none leading-[1.5]";
 
 export function Field(props: FieldProps) {
   const { placeholder, monospace, className, style, onChange, value, defaultValue } = props;

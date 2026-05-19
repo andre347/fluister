@@ -22,7 +22,7 @@ export function Segmented<V extends string>({
   const fontSizeClass = size === "sm" ? "text-[11px]" : "text-[12px]";
   return (
     <div
-      className={`inline-flex bg-[#EAEAE8] rounded-[6px] p-[2px] ${heightClass} shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)]`}
+      className={`inline-flex rounded-[6px] p-[2px] ${heightClass} shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)] bg-[#EAEAE8] dark:bg-[rgba(255,255,255,0.08)]`}
     >
       {options.map((opt) => {
         const selected = opt.value === value;
@@ -33,7 +33,7 @@ export function Segmented<V extends string>({
             onClick={() => onChange?.(opt.value)}
             className={`inline-flex items-center justify-center gap-1.5 px-[11px] rounded-[4px] font-sf cursor-pointer ${fontSizeClass} ${
               selected
-                ? "bg-white font-medium text-ink shadow-[0_1px_1px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.04)]"
+                ? "font-medium text-ink shadow-[0_1px_1px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.04)] bg-input-surface"
                 : "bg-transparent font-normal text-ink"
             }`}
           >

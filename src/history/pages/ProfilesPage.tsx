@@ -464,7 +464,7 @@ function ProfileEditor({
       </div>
 
       {/* Footer */}
-      <div className="mt-auto sticky bottom-0 px-7 py-2.5 border-t-[0.5px] border-hair flex items-center gap-2 bg-[rgba(250,250,247,0.86)] backdrop-blur-xl">
+      <div className="mt-auto sticky bottom-0 px-7 py-2.5 border-t-[0.5px] border-hair flex items-center gap-2 bg-window-bg/85 backdrop-blur-xl">
         {/* Status text only speaks when there's something to say. The
             "no changes" idle state stays silent — Save being disabled is
             already the visual cue. */}
@@ -545,7 +545,7 @@ function AppChip({
   onRemove: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 pl-2 pr-2 py-[3px] bg-white border-[0.5px] border-hair-strong rounded-[5px] text-[12px] text-ink">
+    <span className="inline-flex items-center gap-1.5 pl-2 pr-2 py-[3px] bg-input-surface border-[0.5px] border-hair-strong rounded-[5px] text-[12px] text-ink">
       <span className="font-fl-mono text-[10.5px] text-ink-2">{bundleId}</span>
       <button
         type="button"
@@ -616,7 +616,7 @@ function LivePreview({ stylePrompt }: LivePreviewProps) {
         />
       </div>
       <div className="flex items-center justify-center text-amber-ink">→</div>
-      <div className="p-3.5 rounded-card bg-white border-[0.5px] border-hair min-h-[120px]">
+      <div className="p-3.5 rounded-card bg-input-surface border-[0.5px] border-hair min-h-[120px]">
         <div className="flex items-center gap-1.5 mb-2 font-sf text-[10px] text-amber-ink font-semibold tracking-[0.4px] uppercase">
           <IconSparkle size={10} color="var(--color-amber-ink)" />
           <span>{pending ? "Cleaning…" : error ? "Error" : "Cleaned"}</span>

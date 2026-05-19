@@ -316,7 +316,7 @@ function OllamaRows({
             disabled={selectDisabled}
             value={currentModel}
             onChange={(e) => onChange(e.target.value)}
-            className="h-[26px] rounded-[5px] border-[0.5px] border-hair-strong bg-white text-ink text-[13px] px-2 pr-7 disabled:opacity-60"
+            className="h-[26px] rounded-[5px] border-[0.5px] border-hair-strong bg-input-surface text-ink text-[13px] px-2 pr-7 disabled:opacity-60"
           >
             {options.map((o) => (
               <option key={o.value} value={o.value}>

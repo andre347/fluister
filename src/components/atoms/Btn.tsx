@@ -16,9 +16,14 @@ const sizeClasses: Record<Size, string> = {
   lg: "px-[14px] text-[13px] h-[32px] gap-2",
 };
 
+// Light/dark gradients via CSS variables so endpoints swap with the system
+// theme automatically. Custom properties are scoped to this element only.
 const kindClasses: Record<Kind, string> = {
   default:
-    "text-ink border-[0.5px] border-hair-strong bg-gradient-to-b from-white to-[#fafafa] shadow-[0_1px_0_rgba(0,0,0,0.04)]",
+    "text-ink border-[0.5px] border-hair-strong shadow-[0_1px_0_rgba(0,0,0,0.04)] " +
+    "bg-gradient-to-b from-[var(--btn-fill-top)] to-[var(--btn-fill-bottom)] " +
+    "[--btn-fill-top:#ffffff] [--btn-fill-bottom:#fafafa] " +
+    "dark:[--btn-fill-top:#3a3a3f] dark:[--btn-fill-bottom:#2e2e33]",
   primary:
     "border-[0.5px] border-amber-ink bg-gradient-to-b from-[#F0B574] to-[#E29A4C] text-[#3a2510] shadow-[0_1px_0_rgba(255,255,255,0.4)_inset,0_1px_1px_rgba(178,122,48,0.2)]",
   plain:
@@ -27,7 +32,10 @@ const kindClasses: Record<Kind, string> = {
   // destructive actions inside an editor (e.g. "Delete profile" in the
   // header bar) where red prominence would be too loud.
   danger:
-    "text-red border-[0.5px] border-hair-strong bg-gradient-to-b from-white to-[#fafafa]",
+    "text-red border-[0.5px] border-hair-strong " +
+    "bg-gradient-to-b from-[var(--btn-fill-top)] to-[var(--btn-fill-bottom)] " +
+    "[--btn-fill-top:#ffffff] [--btn-fill-bottom:#fafafa] " +
+    "dark:[--btn-fill-top:#3a3a3f] dark:[--btn-fill-bottom:#2e2e33]",
   // Bold filled red — the *prominent* destructive action in a
   // confirmation dialog. Matches the visual weight of `primary` so the
   // dialog has a clear default action.
