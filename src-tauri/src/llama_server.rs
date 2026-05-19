@@ -6,7 +6,8 @@
 //! the supervisor is given a synchronous chance to SIGTERM + SIGKILL the
 //! child so it doesn't outlive the parent.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -14,12 +15,12 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child as TokioChild, Command as TokioCommand};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
-const SIDECAR_NAME: &str = "binaries/llama-server";
+const SIDECAR_BINARY: &str = "llama-server";
 const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -35,7 +36,7 @@ enum Inner {
     Running {
         port: u16,
         pid: u32,
-        child: CommandChild,
+        child: TokioChild,
         last_used: Instant,
         /// Bearer token llama-server expects on every chat request. Random
         /// per spawn so that other local processes which discover the port
@@ -155,67 +156,79 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<(Strin
 
     let resource_dir = llama_resource_dir(app)?;
     let model_path_str = model_path.to_string_lossy().into_owned();
+    let binary_path = sidecar_binary_path()?;
+    log::info!(
+        "llama-server binary path: {} (exists={})",
+        binary_path.display(),
+        binary_path.exists()
+    );
 
-    let cmd = app
-        .shell()
-        .sidecar(SIDECAR_NAME)
-        .with_context(|| format!("resolving sidecar '{SIDECAR_NAME}'"))?
-        .args([
-            "--host", "127.0.0.1",
-            "--port", &port.to_string(),
-            "--model", &model_path_str,
-            // Require a bearer token on every chat request so other local
-            // processes that discover the port can't piggyback on the
-            // user's loaded model. `/health` is exempt server-side, so the
-            // readiness poll below doesn't need to authenticate.
-            "--api-key", &api_key,
-            // CPU thread count: leave default (llama.cpp picks a sensible
-            // value from hw_concurrency). Metal handles the heavy lifting.
-            "--no-webui",
-            // Conservative context length — cleanup prompts are short and a
-            // bigger ctx would just waste KV-cache RAM.
-            "--ctx-size", "4096",
-            // Slot management: one request at a time is plenty for a
-            // single-user dictation app.
-            "--parallel", "1",
-        ])
-        // Belt-and-suspenders: tell ggml-metal where to find default.metallib.
-        // The bundled rpath already covers dylibs.
-        .env("GGML_METAL_PATH_RESOURCES", resource_dir.to_string_lossy().to_string());
+    // We bypass Tauri's shell plugin and use tokio::process::Command
+    // directly with an absolute path. Tauri 2's sidecar resolution returns
+    // ENOENT on macOS Tahoe for our bundle layout for reasons we couldn't
+    // pin down, even though the binary spawns fine from a regular shell.
+    // Going direct sidesteps the whole shell-plugin path entirely.
+    let mut cmd = TokioCommand::new(&binary_path);
+    cmd.args([
+        "--host", "127.0.0.1",
+        "--port", &port.to_string(),
+        "--model", &model_path_str,
+        // Require a bearer token on every chat request so other local
+        // processes that discover the port can't piggyback on the
+        // user's loaded model. `/health` is exempt server-side, so the
+        // readiness poll below doesn't need to authenticate.
+        "--api-key", &api_key,
+        // CPU thread count: leave default (llama.cpp picks a sensible
+        // value from hw_concurrency). Metal handles the heavy lifting.
+        "--no-webui",
+        // Conservative context length — cleanup prompts are short and a
+        // bigger ctx would just waste KV-cache RAM.
+        "--ctx-size", "4096",
+        // Slot management: one request at a time is plenty for a
+        // single-user dictation app.
+        "--parallel", "1",
+    ])
+    // Belt-and-suspenders: tell ggml-metal where to find default.metallib.
+    // The bundled rpath already covers dylibs.
+    .env("GGML_METAL_PATH_RESOURCES", resource_dir.to_string_lossy().to_string())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(false); // We manage child lifecycle ourselves via terminate_locked.
 
-    let (mut rx, child) = cmd
-        .spawn()
-        .with_context(|| "failed to spawn llama-server sidecar")?;
-    let pid = child.pid();
-
-    // Drain stdout/stderr in the background — llama.cpp is chatty and we
-    // want its logs visible during dev without blocking the pipe.
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(line) | CommandEvent::Stderr(line) => {
-                    if let Ok(text) = std::str::from_utf8(&line) {
-                        log::debug!("[llama-server] {}", text.trim_end());
-                    }
-                }
-                CommandEvent::Terminated(payload) => {
-                    log::warn!(
-                        "llama-server (pid {pid}) terminated: code={:?} signal={:?}",
-                        payload.code,
-                        payload.signal
-                    );
-                    let mut guard = state().lock().await;
-                    if let Inner::Running { pid: current, .. } = &*guard {
-                        if *current == pid {
-                            *guard = Inner::Idle;
-                        }
-                    }
-                    return;
-                }
-                _ => {}
-            }
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(err) => {
+            log::error!(
+                "spawn llama-server failed: {err:?} (binary={}, resource_dir={}, model={})",
+                binary_path.display(),
+                resource_dir.display(),
+                model_path.display()
+            );
+            return Err(err).with_context(|| "failed to spawn llama-server sidecar");
         }
-    });
+    };
+    let pid = child.id().unwrap_or(0);
+    log::info!("llama-server spawned pid={pid}");
+
+    // Drain stdout + stderr line-by-line in background tasks. llama.cpp
+    // emits a lot of startup chatter and we want it surfaced in the file
+    // log without blocking the pipe.
+    if let Some(stdout) = child.stdout.take() {
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::debug!("[llama-server] {line}");
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::debug!("[llama-server] {line}");
+            }
+        });
+    }
 
     *guard = Inner::Running {
         port,
@@ -252,17 +265,30 @@ pub fn shutdown_blocking() {
 
 fn terminate_locked(guard: &mut Inner) {
     let prev = std::mem::replace(guard, Inner::Idle);
-    if let Inner::Running { pid, child, .. } = prev {
+    if let Inner::Running { pid, mut child, .. } = prev {
         log::info!("terminating llama-server pid {pid}");
         // SIGTERM first.
         unsafe {
             libc::kill(pid as i32, libc::SIGTERM);
         }
-        // Brief grace period for clean shutdown, then SIGKILL via the
-        // CommandChild (which sends SIGKILL on Unix).
+        // Brief grace period for clean shutdown, then SIGKILL via tokio's
+        // start_kill (synchronous, only signals — no async wait needed here
+        // because we're already on the shutdown path).
         std::thread::sleep(SIGTERM_GRACE);
-        let _ = child.kill();
+        let _ = child.start_kill();
     }
+}
+
+/// Resolve the absolute path to the bundled llama-server binary. In a
+/// proper Tauri .app on macOS this is `<Bundle>/Contents/MacOS/llama-server`,
+/// which is the same directory as the main fluister executable.
+fn sidecar_binary_path() -> Result<PathBuf> {
+    let exe = std::env::current_exe()
+        .context("can't read current_exe to resolve sidecar path")?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| anyhow!("current_exe has no parent dir"))?;
+    Ok(dir.join(SIDECAR_BINARY))
 }
 
 async fn wait_for_health(port: u16) -> Result<()> {

@@ -415,7 +415,56 @@ fn emit_status(app: &AppHandle, state: &'static str, message: Option<String>) {
 
 fn show_overlay(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.show();
+        if let Err(err) = w.show() {
+            log::error!("show_overlay: w.show() failed: {err:?}");
+            return;
+        }
+        // Re-apply window level and collection behavior on every show. On
+        // macOS those NSWindow mutators MUST run on the main thread or AppKit
+        // crashes the process (Sequoia enforces this strictly). handle_press
+        // runs on the hotkey thread, so marshal the call via Tauri's main
+        // thread queue.
+        //
+        // NSScreenSaverWindowLevel (1000) is high enough to float above
+        // normal app windows even when Fluister is a background agent
+        // (LSUIElement = true). NSStatusWindowLevel (25) was not enough on
+        // Sequoia for a recording pill that stays visible during dictation
+        // into another app.
+        #[cfg(target_os = "macos")]
+        {
+            let app_clone = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let Some(w) = app_clone.get_webview_window("overlay") else {
+                    log::error!("show_overlay: overlay disappeared before re-leveling");
+                    return;
+                };
+                unsafe {
+                    use objc2::msg_send;
+                    use objc2::runtime::AnyObject;
+                    match w.ns_window() {
+                        Ok(ptr) => {
+                            let ns_window = ptr as *mut AnyObject;
+                            const NS_SCREEN_SAVER_WINDOW_LEVEL: isize = 1000;
+                            let _: () = msg_send![ns_window, setLevel: NS_SCREEN_SAVER_WINDOW_LEVEL];
+                            const COLLECTION_BEHAVIOR: u64 = (1 << 0) | (1 << 8) | (1 << 6);
+                            let _: () = msg_send![ns_window, setCollectionBehavior: COLLECTION_BEHAVIOR];
+                            let actual_level: isize = msg_send![ns_window, level];
+                            let actual_behavior: u64 = msg_send![ns_window, collectionBehavior];
+                            log::info!(
+                                "show_overlay: applied level={} behavior=0x{:x}",
+                                actual_level,
+                                actual_behavior
+                            );
+                        }
+                        Err(err) => {
+                            log::warn!("show_overlay: ns_window unavailable: {err:?}");
+                        }
+                    }
+                }
+            });
+        }
+    } else {
+        log::error!("show_overlay: no overlay window registered");
     }
 }
 
@@ -479,7 +528,20 @@ fn position_overlay(app: &AppHandle) {
         // "bottom-right" or any unknown value
         _ => (right_x, bottom_y),
     };
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    log::info!(
+        "position_overlay: preference={} monitor={}x{} scale={:.2} window={}x{} -> ({}, {})",
+        preference,
+        mw,
+        mh,
+        monitor.scale_factor(),
+        ww,
+        wh,
+        x,
+        y
+    );
+    if let Err(err) = window.set_position(tauri::PhysicalPosition::new(x, y)) {
+        log::error!("position_overlay: set_position failed: {err:?}");
+    }
 }
 
 /// Briefly shows the overlay at its new position so the user can confirm
@@ -514,6 +576,7 @@ fn capture_target_app(state: &AppState) {
 // ─── Hotkey handlers ─────────────────────────────────────────────────────────
 
 fn handle_press(app: AppHandle) {
+    log::info!("handle_press: entered");
     let recorder;
     let is_recording_flag;
     let vad_silence_ms;
@@ -521,6 +584,7 @@ fn handle_press(app: AppHandle) {
         let state = app.state::<AppState>();
         let mut flag = state.is_recording.lock();
         if *flag {
+            log::info!("handle_press: already recording, bailing");
             return;
         }
         *flag = true;
@@ -1809,9 +1873,52 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 // ─── Entry point ────────────────────────────────────────────────────────────
 
+/// Wire up env_logger to write to both stderr and `~/Library/Logs/Fluister/fluister.log`.
+/// File output is critical because Fluister normally runs as an LSUIElement (menu-bar
+/// agent) launched via Finder or `open`, which detaches stderr. Without a file sink,
+/// log lines from the Rust side are lost.
+fn init_logging() {
+    use std::io::Write;
+    use std::sync::Mutex;
+
+    let log_path = dirs::home_dir()
+        .map(|h| h.join("Library/Logs/Fluister/fluister.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/fluister.log"));
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path);
+
+    let mut builder = env_logger::Builder::from_default_env();
+    if let Ok(f) = file {
+        // Tee to both stderr (visible when launched from terminal) and the
+        // file (visible when launched via `open` or Finder).
+        let f = Mutex::new(f);
+        builder.format(move |buf, record| {
+            let line = format!(
+                "[{} {} {}] {}\n",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                record.level(),
+                record.target(),
+                record.args()
+            );
+            if let Ok(mut handle) = f.lock() {
+                let _ = handle.write_all(line.as_bytes());
+                let _ = handle.flush();
+            }
+            buf.write_all(line.as_bytes())
+        });
+    }
+    let _ = builder.try_init();
+    log::info!("logging initialised, log file: {}", log_path.display());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = env_logger::try_init();
+    init_logging();
 
     // Migrate user data (history db, downloaded models) from the old
     // local-whisper directory before opening anything.
@@ -1972,8 +2079,8 @@ pub fn run() {
                     match overlay.ns_window() {
                         Ok(ptr) => {
                             let ns_window = ptr as *mut AnyObject;
-                            const NS_STATUS_WINDOW_LEVEL: isize = 25;
-                            let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+                            const NS_SCREEN_SAVER_WINDOW_LEVEL: isize = 1000;
+                            let _: () = msg_send![ns_window, setLevel: NS_SCREEN_SAVER_WINDOW_LEVEL];
 
                             // NSWindowCollectionBehavior bits:
                             //   CanJoinAllSpaces      = 1 << 0
