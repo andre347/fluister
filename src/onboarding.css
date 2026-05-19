@@ -43,15 +43,16 @@ button:focus-visible {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 18px 36px 14px;
+  padding: 16px 24px 12px;
   gap: 0;
 }
 
 .ob-step-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .ob-step-wrap:has(.ob-step-line) {
@@ -59,13 +60,13 @@ button:focus-visible {
 }
 
 .ob-step-node {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -86,10 +87,10 @@ button:focus-visible {
 }
 
 .ob-step-label {
-  font-size: var(--text-tag);
+  font-size: 10px;
   font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 .ob-step-label-done    { color: var(--color-text-muted); }
@@ -242,24 +243,25 @@ button:focus-visible {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   grid-template-rows: 1fr 1fr;
-  gap: 24px;
+  gap: 10px;
   width: 100%;
-  max-width: 460px;
+  max-width: 280px;
   aspect-ratio: 16 / 10;
-  padding: 14px;
+  padding: 10px;
   border: 1px solid var(--color-separator);
-  border-radius: 14px;
+  border-radius: 10px;
   background: color-mix(in oklch, var(--color-fg) 6%, var(--color-canvas));
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06) inset;
+  margin: 8px auto 12px auto;
 }
 
 .ob-overlay-dot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  padding: 3px;
   border: 1px dashed transparent;
-  border-radius: 10px;
+  border-radius: 6px;
   background: transparent;
   cursor: default;
   transition: border-color 120ms var(--ease-default), background-color 120ms var(--ease-default);
@@ -277,19 +279,19 @@ button:focus-visible {
 .ob-overlay-pill {
   position: relative;
   display: inline-block;
-  width: 48px;
-  height: 14px;
+  width: 28px;
+  height: 8px;
   background: var(--color-hud-bg);
   border-radius: 999px;
 }
 .ob-overlay-pill::before {
   content: "";
   position: absolute;
-  left: 5px;
+  left: 3px;
   top: 50%;
   transform: translateY(-50%);
-  width: 5px;
-  height: 5px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   background: var(--color-danger);
 }

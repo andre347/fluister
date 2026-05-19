@@ -47,7 +47,7 @@ const STEPS: { id: StepId; label: string }[] = [
   { id: 0, label: "Permissions" },
   { id: 1, label: "Overlay" },
   { id: 2, label: "Model" },
-  { id: 3, label: "AI cleanup" },
+  { id: 3, label: "Cleanup" },
   { id: 4, label: "Storage" },
   { id: 5, label: "Done" },
 ];
@@ -401,11 +401,20 @@ export function App() {
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
-  const permsReady =
-    !!status
-    && status.microphone === "authorized"
-    && status.accessibility
-    && status.input_monitoring;
+  // Dev-mode escape hatch: pnpm tauri dev produces a separate binary at
+  // target/debug/ that doesn't inherit the TCC grants of the installed
+  // /Applications/Fluister.app. Re-granting all three permissions to the
+  // dev build every iteration is friction we don't need while we're
+  // iterating on UI, so allow Continue even with permissions unset when
+  // Vite is in dev mode. import.meta.env.DEV is statically false in
+  // production builds so this bypass is stripped out of the shipping
+  // bundle.
+  const permsReady = import.meta.env.DEV
+    ? true
+    : !!status
+      && status.microphone === "authorized"
+      && status.accessibility
+      && status.input_monitoring;
 
   return (
     <div className="ob-shell">
@@ -495,7 +504,7 @@ export function App() {
           step {step + 1} of {STEPS.length}
         </span>
         <div className="ob-footer-actions">
-          {step > 0 && step < 5 && (
+          {step > 0 && (
             <Button variant="ghost" size="sm" onClick={goBack} className="h-9 px-4 gap-1.5">
               <ChevronLeft size={14} aria-hidden />
               <span>Back</span>
