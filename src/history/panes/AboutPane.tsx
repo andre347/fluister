@@ -102,7 +102,7 @@ export function AboutPane() {
         </Btn>
       </div>
 
-      <div className="text-[11px] text-ink-4 mt-3">© 2026 · made on a Mac · MIT</div>
+      <div className="text-[11px] text-ink-4 mt-3">© 2026 · MIT</div>
     </div>
   );
 }

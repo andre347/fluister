@@ -43,9 +43,19 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
+    /// Cancel the server loop and wait — briefly — for it to drain.
+    ///
+    /// `axum::serve(...).with_graceful_shutdown` waits for every in-flight
+    /// connection to close before returning. Streamable-HTTP MCP sessions
+    /// hold a long-lived SSE response stream open, so a connected Claude
+    /// Code / Desktop / Cursor session keeps the graceful shutdown future
+    /// pending indefinitely. On app quit (and especially during an
+    /// auto-update relaunch) we don't have the luxury of waiting — bound
+    /// the wait so the parent process can actually exit. Any sessions
+    /// still hanging on are torn down when the process dies anyway.
     pub async fn shutdown(self) {
         self.cancel.cancel();
-        let _ = self.join.await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), self.join).await;
     }
 }
 
