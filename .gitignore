@@ -32,6 +32,10 @@ src-tauri/icons/app-icon-original.png
 # Local-only design brief (kept on disk, not in git)
 FLUISTER_DESIGN_BRIEF.md
 
+# Source content for the marketing-site docs (consumed by a separate
+# Claude Code session in fluister-web — not part of this repo's history).
+docs/README.md
+
 # Personal screenshots used while sketching designs
 design/uploads/
 
