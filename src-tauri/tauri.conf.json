@@ -4,7 +4,8 @@
   "version": "0.1.11",
   "identifier": "com.fluister.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "runner": "./sign-dev.sh",
+    "beforeDevCommand": "pkill -x fluister 2>/dev/null; pkill -f 'target/debug/llama-server' 2>/dev/null; pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"

@@ -32,12 +32,13 @@ src-tauri/icons/app-icon-original.png
 # Local-only design brief (kept on disk, not in git)
 FLUISTER_DESIGN_BRIEF.md
 
-# Source content for the marketing-site docs (consumed by a separate
-# Claude Code session in fluister-web — not part of this repo's history).
-docs/README.md
+# Design sketches + working files — kept locally, not pushed to GitHub.
+design/
 
-# Personal screenshots used while sketching designs
-design/uploads/
+# Local-only docs (mcp.md is the MCP spec reference; README.md is the
+# marketing-site docs source consumed by a separate Claude Code session
+# in fluister-web). Neither belongs in this repo's public history.
+docs/
 
 # Environment files (safety net — never commit secrets)
 .env
