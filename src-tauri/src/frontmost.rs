@@ -39,6 +39,13 @@ pub fn current() -> Option<TargetApp> {
 }
 
 pub fn activate(pid: i32) -> bool {
+    // `NSApplicationActivationOptions` bitmask. `NSRunningApplication` only
+    // exposes `activateWithOptions:` — there is no bare `-activate` (that lives
+    // on `NSApplication`), and sending it raises `doesNotRecognizeSelector`,
+    // which crashes the process. Activate all windows and pull ahead of the
+    // current app so the synthesized ⌘V lands in the intended target.
+    const NS_ACTIVATE_ALL_WINDOWS: usize = 1 << 0;
+    const NS_ACTIVATE_IGNORING_OTHER_APPS: usize = 1 << 1;
     unsafe {
         let cls = class!(NSRunningApplication);
         let app: Option<Retained<AnyObject>> =
@@ -46,7 +53,8 @@ pub fn activate(pid: i32) -> bool {
         match app {
             None => false,
             Some(app) => {
-                let activated: Bool = msg_send![&*app, activate];
+                let options: usize = NS_ACTIVATE_ALL_WINDOWS | NS_ACTIVATE_IGNORING_OTHER_APPS;
+                let activated: Bool = msg_send![&*app, activateWithOptions: options];
                 activated.as_bool()
             }
         }

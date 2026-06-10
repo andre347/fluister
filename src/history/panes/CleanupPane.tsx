@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   commands,
+  type CleanupLevel,
   type LlmBackend,
   type LlmDownloadDone,
   type LlmDownloadFailed,
@@ -21,6 +22,18 @@ const BACKEND_OPTIONS: { value: LlmBackend; label: string }[] = [
   { value: "external_ollama", label: "Ollama" },
 ];
 
+const LEVEL_OPTIONS: { value: CleanupLevel; label: string }[] = [
+  { value: "light", label: "Light" },
+  { value: "standard", label: "Standard" },
+  { value: "aggressive", label: "Aggressive" },
+];
+
+const LEVEL_HINTS: Record<CleanupLevel, string> = {
+  light: "Fixes clear fillers and punctuation only — keeps your exact wording.",
+  standard: "Removes fillers and false starts, fixes punctuation. Preserves phrasing.",
+  aggressive: "Also drops conversational filler and tightens phrasing for concision — may rephrase.",
+};
+
 type Props = {
   settings: Settings;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -29,6 +42,7 @@ type Props = {
 export function CleanupPane({ settings, updateSettings }: Props) {
   const cleanup = settings.cleanup_enabled;
   const backend = settings.llm_backend;
+  const level = settings.cleanup_level;
 
   return (
     <>
@@ -42,6 +56,17 @@ export function CleanupPane({ settings, updateSettings }: Props) {
             checked={cleanup}
             onCheckedChange={(v) => updateSettings({ cleanup_enabled: v })}
           />
+        </PrefRow>
+
+        <PrefRow label="Cleanup level" hint={LEVEL_HINTS[level]}>
+          <div className={cn(!cleanup && "opacity-40 pointer-events-none")}>
+            <Segmented
+              options={LEVEL_OPTIONS}
+              value={level}
+              onChange={(v) => updateSettings({ cleanup_level: v })}
+              size="sm"
+            />
+          </div>
         </PrefRow>
 
         <PrefRow

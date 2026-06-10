@@ -151,6 +151,7 @@ pub async fn cleanup(
     model: &str,
     language: &str,
     extra_style: &str,
+    cleanup_level: &str,
 ) -> Result<String> {
     let text = text.trim();
 
@@ -166,11 +167,29 @@ pub async fn cleanup(
     let fillers = llm_prompt::fillers_for(language);
     let delimiter = llm_prompt::make_delimiter();
 
-    let system = llm_prompt::make_cleanup_system_message(lang_name);
-    let user_msg =
-        llm_prompt::make_cleanup_user_message(text, lang_name, fillers, extra_style, &delimiter);
+    let level = llm_prompt::CleanupLevel::parse(cleanup_level);
+    let system = llm_prompt::make_cleanup_system_message(lang_name, level);
+    let user_msg = llm_prompt::make_cleanup_user_message(
+        text,
+        lang_name,
+        fillers,
+        extra_style,
+        &delimiter,
+        level,
+    );
 
-    let num_predict = llm_prompt::estimate_num_predict(text);
+    // Pin the context window so input + output budgeting is coherent — Ollama
+    // otherwise defaults to a small num_ctx (often 2048) and silently truncates
+    // long transcripts.
+    const OLLAMA_CTX: u32 = 8192;
+    let num_predict = match llm_prompt::cleanup_budget(text, OLLAMA_CTX) {
+        llm_prompt::CleanupBudget::Fits { num_predict } => num_predict,
+        llm_prompt::CleanupBudget::TooLong => {
+            return Err(anyhow!(
+                "This text is too long for the cleanup model's context window."
+            ));
+        }
+    };
 
     // Use the chat API rather than /api/generate. Chat-tuned models treat
     // the input as a turn rather than a document to continue, which makes
@@ -185,6 +204,7 @@ pub async fn cleanup(
         "keep_alive": "5m",
         "options": {
             "temperature": 0.0,
+            "num_ctx": OLLAMA_CTX,
             "num_predict": num_predict
         }
     });

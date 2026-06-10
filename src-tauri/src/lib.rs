@@ -56,6 +56,12 @@ pub struct Settings {
     pub whisper_model_path: String,
     #[serde(default = "default_cleanup_enabled")]
     pub cleanup_enabled: bool,
+    /// How aggressively the cleanup model edits the transcript:
+    /// `"light"`  — fix only clear fillers + punctuation, keep wording verbatim;
+    /// `"standard"` (default) — also drop false starts/self-corrections, preserve clause order;
+    /// `"aggressive"` — also tighten phrasing and may merge clauses for concision.
+    #[serde(default = "default_cleanup_level")]
+    pub cleanup_level: String,
     #[serde(default)]
     pub vad_silence_ms: i64,
     #[serde(default = "default_overlay_position")]
@@ -111,6 +117,10 @@ fn default_cleanup_enabled() -> bool {
     true
 }
 
+fn default_cleanup_level() -> String {
+    "standard".into()
+}
+
 fn default_overlay_position() -> String {
     "bottom-right".into()
 }
@@ -133,6 +143,7 @@ impl Default for Settings {
             ollama_model: default_ollama_model(),
             whisper_model_path: default_whisper_model_path(),
             cleanup_enabled: default_cleanup_enabled(),
+            cleanup_level: default_cleanup_level(),
             vad_silence_ms: 0,
             overlay_position: default_overlay_position(),
             theme: default_theme(),
@@ -280,7 +291,25 @@ fn reconcile_vault_into_db(
     root: &Path,
     delete_orphans: bool,
 ) -> anyhow::Result<()> {
-    vault::ensure_layout(root)?;
+    if delete_orphans {
+        // Destructive pass: the vault is authoritative *including absences*,
+        // so a profile/term missing from disk gets deleted from SQLite. That
+        // is correct only when the vault genuinely exists. If the root or its
+        // layout dirs are gone (moved/renamed in Finder, or a sync client
+        // evicted them), we must NOT recreate an empty layout — doing so
+        // would present an empty vault and wipe every cached row. Refuse the
+        // pass and let the data sit untouched until the vault reappears.
+        if !vault::layout_exists(root) {
+            return Err(anyhow::anyhow!(
+                "vault layout missing at {} — refusing destructive reconcile (vault moved, renamed, or temporarily unavailable?)",
+                root.display()
+            ));
+        }
+    } else {
+        // Non-destructive population (set-vault / startup) legitimately
+        // creates the layout on first use.
+        vault::ensure_layout(root)?;
+    }
 
     // ── Profiles ──
     let vault_profiles = vault::list_profiles(root)?;
@@ -624,18 +653,48 @@ fn handle_press(app: AppHandle) {
         vad_silence_ms = state.settings.lock().vad_silence_ms;
     }
 
-    if let Err(e) = recorder.start() {
-        *is_recording_flag.lock() = false;
-        log::error!("recorder start failed: {e}");
-        emit_status(&app, "error", Some(format!("mic: {e}")));
-        return;
-    }
+    // Enqueue the stream start *synchronously on the tap thread* — the send is
+    // cheap and, crucially, strictly orders this Start before any later Stop
+    // (a fast press→release must not let Stop reach the audio thread first and
+    // orphan the stream). Opening the device, though, is blocking work
+    // (50–300 ms, up to ~1 s for Bluetooth/SCO); waiting for it inline would
+    // stall CGEventTap delivery and risk macOS disabling the tap on timeout.
+    // So we await the result off the tap thread. The `is_recording` flag is
+    // already flipped above, so re-press debounce stays intact.
+    let start_rx = recorder.start();
+    tauri::async_runtime::spawn(async move {
+        let start_result = tokio::task::spawn_blocking(move || {
+            start_rx
+                .recv()
+                .map_err(|_| anyhow::anyhow!("audio thread closed"))?
+        })
+        .await;
 
-    position_overlay(&app);
-    show_overlay(&app);
-    emit_status(&app, "recording", None);
+        match start_result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                *is_recording_flag.lock() = false;
+                log::error!("recorder start failed: {e}");
+                position_overlay(&app);
+                show_overlay(&app);
+                emit_status(&app, "error", Some(format!("mic: {e}")));
+                hide_after_delay(app, 2500).await;
+                return;
+            }
+            Err(e) => {
+                *is_recording_flag.lock() = false;
+                log::error!("recorder start task panicked: {e}");
+                return;
+            }
+        }
 
-    spawn_level_task(app, recorder, is_recording_flag, vad_silence_ms);
+        // Stream is live — only now present the HUD as recording.
+        position_overlay(&app);
+        show_overlay(&app);
+        emit_status(&app, "recording", None);
+
+        spawn_level_task(app, recorder, is_recording_flag, vad_silence_ms);
+    });
 }
 
 fn spawn_level_task(
@@ -716,18 +775,37 @@ fn handle_release(app: AppHandle) {
         .unwrap_or(0);
 
     emit_status(&app, "transcribing", None);
-    let samples = match recorder.stop() {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("recorder stop failed: {e}");
-            emit_status(&app, "error", Some(format!("stop: {e}")));
-            tauri::async_runtime::spawn(hide_after_delay(app.clone(), 1500));
-            return;
-        }
-    };
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Stop the stream and resample to mono 16 kHz on a blocking pool
+        // thread. The resample is a full pass over the whole recording
+        // (~50–150 ms for a long dictation) and previously ran inline on the
+        // CGEventTap callback thread. `start` was already enqueued
+        // synchronously during the press, so doing the Stop send here can't
+        // reorder ahead of it.
+        let samples = match tokio::task::spawn_blocking(move || {
+            recorder
+                .stop()
+                .map(|(raw, rate, channels)| audio::to_mono_16k(&raw, rate, channels))
+        })
+        .await
+        {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                log::error!("recorder stop failed: {e}");
+                emit_status(&app_handle, "error", Some(format!("stop: {e}")));
+                hide_after_delay(app_handle.clone(), 2500).await;
+                return;
+            }
+            Err(e) => {
+                log::error!("recorder stop task panicked: {e}");
+                emit_status(&app_handle, "error", Some("recording capture failed".into()));
+                hide_after_delay(app_handle.clone(), 2500).await;
+                return;
+            }
+        };
+
         let result = run_pipeline(
             &app_handle,
             samples,
@@ -738,19 +816,47 @@ fn handle_release(app: AppHandle) {
         )
         .await;
         match result {
-            Ok(_) => emit_status(&app_handle, "idle", None),
+            Ok(PipelineOutcome::Pasted) => {
+                emit_status(&app_handle, "idle", None);
+                hide_after_delay(app_handle.clone(), 800).await;
+            }
+            // Pasted, but with a caveat (e.g. too long to clean → raw pasted).
+            // Flash the notice; the text is already in the target app.
+            Ok(PipelineOutcome::PastedWithNotice(msg)) => {
+                emit_status(&app_handle, "error", Some(msg.to_string()));
+                hide_after_delay(app_handle.clone(), 2500).await;
+            }
+            // A no-op recording (too short / too quiet / no speech). Not an
+            // error, but the user pressed the key and nothing got pasted —
+            // tell them why instead of silently vanishing. Hold long enough
+            // to read, but briefer than a hard error.
+            Ok(PipelineOutcome::Skipped(reason)) => {
+                emit_status(&app_handle, "error", Some(reason.to_string()));
+                hide_after_delay(app_handle.clone(), 2200).await;
+            }
             Err(e) => {
                 log::error!("pipeline failed: {e}");
                 emit_status(&app_handle, "error", Some(e.to_string()));
+                hide_after_delay(app_handle.clone(), 3000).await;
             }
         }
-        hide_after_delay(app_handle.clone(), 800).await;
     });
 }
 
 async fn hide_after_delay(app: AppHandle, ms: u64) {
     tokio::time::sleep(Duration::from_millis(ms)).await;
     hide_overlay(&app);
+}
+
+/// What `run_pipeline` did, so the caller can give the user the right HUD
+/// feedback. A `Skipped` recording isn't a failure — nothing was pasted
+/// because there was nothing worth pasting — but it still deserves a word.
+enum PipelineOutcome {
+    Pasted,
+    /// Text was pasted, but with a caveat worth flashing on the pill (e.g. the
+    /// transcript was too long to clean, so the raw text was pasted instead).
+    PastedWithNotice(&'static str),
+    Skipped(&'static str),
 }
 
 async fn run_pipeline(
@@ -760,18 +866,17 @@ async fn run_pipeline(
     settings: Settings,
     database: db::Db,
     duration_ms: i64,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PipelineOutcome> {
     if samples.len() < 16_000 / 4 {
-        return Ok(());
+        return Ok(PipelineOutcome::Skipped("Too short — hold and speak"));
     }
 
     let peak = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
     if peak < 0.012 {
-        return Ok(());
+        return Ok(PipelineOutcome::Skipped("No speech detected"));
     }
 
     let model_path = std::path::Path::new(&settings.whisper_model_path).to_path_buf();
-    let transcriber = ensure_whisper(&whisper_slot, &model_path)?;
 
     // Resolve the active profile (falls back to the seeded "Default" profile
     // or to an empty no-op profile if even that's gone).
@@ -801,14 +906,20 @@ async fn run_pipeline(
 
     let whisper_iso = llm_prompt::whisper_iso(&settings.language).map(str::to_string);
 
-    let raw = tokio::task::spawn_blocking(move || {
+    let raw = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        // Load (or reuse) the Whisper model on the blocking pool. The first
+        // load of a session reads the ggml weights and uploads to Metal —
+        // 0.3 s for base.en up to ~12 s for large-v3 — which must never run
+        // on a tokio worker. The pre-warm task in setup() usually means the
+        // model is already resident by the time the first dictation lands.
+        let transcriber = ensure_whisper(&whisper_slot, &model_path)?;
         transcriber.transcribe(&samples, &prompt, whisper_iso.as_deref())
     })
     .await
     .map_err(|e| anyhow::anyhow!("transcribe task: {e}"))??;
 
     if is_silence_artifact(&raw) {
-        return Ok(());
+        return Ok(PipelineOutcome::Skipped("No speech detected"));
     }
 
     let style_prompt = active_profile
@@ -816,14 +927,29 @@ async fn run_pipeline(
         .map(|p| p.style_prompt.as_str())
         .unwrap_or("");
 
+    // Tracks whether we pasted something other than fully-cleaned text, so the
+    // caller can surface a brief notice on the pill.
+    let mut notice: Option<&'static str> = None;
     let cleaned_pre = if settings.cleanup_enabled {
-        emit_status(app, "cleaning", None);
-        match llm::cleanup(app, &settings, &raw, &settings.language, style_prompt).await {
-            Ok(text) if !text.is_empty() => text,
-            Ok(_) => raw.clone(),
-            Err(e) => {
-                log::warn!("cleanup failed, using raw transcript: {e}");
+        // Gate on the context window first: a transcript longer than the model
+        // can hold would be rejected (or truncated) by the sidecar, so skip
+        // cleanup and paste the raw text with a notice instead of failing.
+        match llm_prompt::cleanup_budget(&raw, llama_server::CTX_SIZE) {
+            llm_prompt::CleanupBudget::TooLong => {
+                log::warn!("dictation too long for cleanup context window; pasting raw");
+                notice = Some("Too long to clean — pasted raw text");
                 raw.clone()
+            }
+            llm_prompt::CleanupBudget::Fits { .. } => {
+                emit_status(app, "cleaning", None);
+                match llm::cleanup(app, &settings, &raw, &settings.language, style_prompt).await {
+                    Ok(text) if !text.is_empty() => text,
+                    Ok(_) => raw.clone(),
+                    Err(e) => {
+                        log::warn!("cleanup failed, using raw transcript: {e}");
+                        raw.clone()
+                    }
+                }
             }
         }
     } else {
@@ -845,7 +971,10 @@ async fn run_pipeline(
         Err(e) => log::warn!("history save failed: {e}"),
     }
 
-    Ok(())
+    Ok(match notice {
+        Some(msg) => PipelineOutcome::PastedWithNotice(msg),
+        None => PipelineOutcome::Pasted,
+    })
 }
 
 fn is_silence_artifact(text: &str) -> bool {
@@ -2215,8 +2344,8 @@ pub fn run() {
             // Pre-warm the cleanup model after a short delay so the very
             // first dictation of the session doesn't pay the ~5 s cold
             // start. We deliberately wait 4 seconds:
-            //   - lets the UI render and Whisper's lazy init finish first,
-            //     so we don't compete for Metal at startup;
+            //   - staggered after the Whisper pre-warm (2 s) so the two don't
+            //     compete for Metal at startup;
             //   - long enough that a user who's just launching Fluister to
             //     check Settings doesn't pay any model-load cost.
             // Combined with the IDLE_TIMEOUT bump to 60 min in
@@ -2250,6 +2379,35 @@ pub fn run() {
                     Ok(_) => log::info!("cleanup model pre-warmed"),
                     Err(e) => log::warn!("cleanup pre-warm failed (will retry on first cleanup): {e:?}"),
                 }
+            });
+
+            // Pre-warm Whisper too. Without this, the very first dictation of
+            // the session pays the model-load cost (0.3 s base.en … ~12 s
+            // large-v3) *between key release and paste* — the single worst
+            // first-use latency in the app. Done on a blocking thread so the
+            // ggml read + Metal upload never stalls a tokio worker.
+            let whisper_prewarm_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let (slot, model_path) = {
+                    let state = whisper_prewarm_app.state::<AppState>();
+                    let path = PathBuf::from(&state.settings.lock().whisper_model_path);
+                    (Arc::clone(&state.whisper), path)
+                };
+                if !model_path.exists() {
+                    // Model not downloaded yet (brand-new user). Pre-warm is a
+                    // no-op; the first dictation surfaces a clear error.
+                    return;
+                }
+                let _ = tokio::task::spawn_blocking(move || {
+                    match ensure_whisper(&slot, &model_path) {
+                        Ok(_) => log::info!("whisper model pre-warmed"),
+                        Err(e) => log::warn!(
+                            "whisper pre-warm failed (will retry on first dictation): {e:?}"
+                        ),
+                    }
+                })
+                .await;
             });
 
             Ok(())

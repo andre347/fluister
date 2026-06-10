@@ -26,6 +26,7 @@ function formatElapsed(ms: number): string {
 
 export function App() {
   const [state, setState] = useState<OverlayState>("idle");
+  const [message, setMessage] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
 
@@ -80,6 +81,7 @@ export function App() {
   useTauriEvent<StatusPayload>("status", (e) => {
     const next = e.payload.state;
     setState(next);
+    setMessage(e.payload.message ?? null);
     if (next === "recording") {
       recordingStartRef.current = performance.now();
       if (timerRef.current) timerRef.current.textContent = "0:00";
@@ -105,7 +107,6 @@ export function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  const recording = state === "recording";
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeId) ?? null,
     [profiles, activeId],
@@ -117,7 +118,8 @@ export function App() {
         ref={pillRef}
         activeProfileName={activeProfile?.name ?? "Default"}
         timerRef={timerRef}
-        recording={recording}
+        state={state}
+        message={message}
         waveformRef={waveformRef}
       />
     </div>

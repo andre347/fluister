@@ -25,10 +25,17 @@ export interface Dictation {
 
 export type LlmBackend = "bundled" | "external_ollama";
 
+/** How aggressively cleanup edits the transcript. "standard" is the default. */
+export type CleanupLevel = "light" | "standard" | "aggressive";
+
 export interface Settings {
   ollama_model: string;
   whisper_model_path: string;
   cleanup_enabled: boolean;
+  /** How much liberty cleanup takes with the wording. "light" fixes only
+   *  clear fillers + punctuation; "standard" also drops false starts;
+   *  "aggressive" also tightens phrasing and may merge clauses. */
+  cleanup_level: CleanupLevel;
   vad_silence_ms: number;
   overlay_position: OverlayPosition;
   theme: Theme;

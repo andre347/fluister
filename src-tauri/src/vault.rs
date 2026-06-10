@@ -80,6 +80,17 @@ pub fn ensure_layout(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// True only if the vault root and both layout subdirectories already exist
+/// on disk. Used to distinguish "a real, populated vault" from "the path the
+/// user configured, but the folder is currently gone" (moved/renamed in
+/// Finder, or a sync client like iCloud/Dropbox briefly evicted it). Callers
+/// about to run a *destructive* reconcile must check this first, because
+/// recreating a missing layout would present an empty vault and delete every
+/// cached row as an orphan.
+pub fn layout_exists(root: &Path) -> bool {
+    root.is_dir() && profiles_dir(root).is_dir() && vocabulary_dir(root).is_dir()
+}
+
 // ─── Slug + filename helpers ────────────────────────────────────────────────
 
 /// Convert a human profile name to a filesystem-safe filename stem.

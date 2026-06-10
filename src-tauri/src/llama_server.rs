@@ -34,6 +34,13 @@ const IDLE_TICK: Duration = Duration::from_secs(60);
 const SIGTERM_GRACE: Duration = Duration::from_secs(2);
 const CHAT_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Context window the sidecar is launched with. The whole cleanup prompt
+/// (instructions + transcript) plus the generated output must fit inside this,
+/// so it bounds how long a dictation we can clean — ~13–15 min of speech at
+/// 8192. Bigger windows cost KV-cache RAM; callers size `max_tokens` against
+/// this via `llm_prompt::cleanup_budget`.
+pub const CTX_SIZE: u32 = 8192;
+
 static STATE: OnceLock<Mutex<Inner>> = OnceLock::new();
 static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -76,7 +83,7 @@ pub fn install_idle_watchdog() {
             );
             if idle_too_long {
                 log::info!("llama-server idle > {}s, shutting down", IDLE_TIMEOUT.as_secs());
-                terminate_locked(&mut guard);
+                terminate_async(&mut guard);
             }
         }
     });
@@ -87,23 +94,35 @@ pub fn install_idle_watchdog() {
 pub async fn chat_completions(app: &AppHandle, model_path: &Path, body: Value) -> Result<String> {
     let (base_url, api_key) = ensure_running(app, model_path).await?;
 
-    let resp = http()
+    let resp = match http()
         .post(format!("{base_url}/v1/chat/completions"))
         .timeout(CHAT_TIMEOUT)
         .bearer_auth(&api_key)
         .json(&body)
         .send()
         .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                anyhow!(
-                    "llama-server cleanup timed out after {}s",
-                    CHAT_TIMEOUT.as_secs()
-                )
-            } else {
-                anyhow!("llama-server request failed: {e}")
+    {
+        Ok(resp) => resp,
+        Err(e) if e.is_timeout() => {
+            // A timeout just means the model is slow — the server is still
+            // alive, so leave it running for the next request.
+            return Err(anyhow!(
+                "llama-server cleanup timed out after {}s",
+                CHAT_TIMEOUT.as_secs()
+            ));
+        }
+        Err(e) => {
+            // A connection-level failure means the cached child is almost
+            // certainly dead — connection refused, reset by peer, etc. Tear
+            // the supervisor back down to Idle so the *next* request respawns
+            // a fresh server instead of reusing the dead handle forever.
+            if let Some(mtx) = STATE.get() {
+                let mut g = mtx.lock().await;
+                terminate_async(&mut g);
             }
-        })?;
+            return Err(anyhow!("llama-server request failed: {e}"));
+        }
+    };
 
     let status = resp.status();
     if !status.is_success() {
@@ -174,6 +193,7 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<(Strin
     // ENOENT on macOS Tahoe for our bundle layout for reasons we couldn't
     // pin down, even though the binary spawns fine from a regular shell.
     // Going direct sidesteps the whole shell-plugin path entirely.
+    let ctx_size = CTX_SIZE.to_string();
     let mut cmd = TokioCommand::new(&binary_path);
     cmd.args([
         "--host", "127.0.0.1",
@@ -187,16 +207,24 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<(Strin
         // CPU thread count: leave default (llama.cpp picks a sensible
         // value from hw_concurrency). Metal handles the heavy lifting.
         "--no-webui",
-        // Conservative context length — cleanup prompts are short and a
-        // bigger ctx would just waste KV-cache RAM.
-        "--ctx-size", "4096",
+        // Context window — must hold prompt + transcript + output. See CTX_SIZE.
+        "--ctx-size", ctx_size.as_str(),
         // Slot management: one request at a time is plenty for a
         // single-user dictation app.
         "--parallel", "1",
     ])
-    // Belt-and-suspenders: tell ggml-metal where to find default.metallib.
-    // The bundled rpath already covers dylibs.
+    // Tell ggml-metal where to find its Metal resources.
     .env("GGML_METAL_PATH_RESOURCES", resource_dir.to_string_lossy().to_string())
+    // Help the loader find the ggml/llama/mtmd dylibs. The binary's rpath is
+    // `@executable_path/../Resources/llama`, which resolves correctly inside
+    // the bundled .app (Contents/MacOS → Contents/Resources/llama) but NOT in
+    // `tauri dev`, where the binary lives in target/debug and the resources in
+    // target/debug/llama. DYLD_FALLBACK_LIBRARY_PATH is consulted only after
+    // the rpath misses, so it rescues the dev layout while staying a no-op in
+    // release. Without it, the sidecar dies on launch with
+    // "Library not loaded: @rpath/libmtmd.dylib" and cleanup silently falls
+    // back to the raw transcript after the health-check timeout.
+    .env("DYLD_FALLBACK_LIBRARY_PATH", resource_dir.to_string_lossy().to_string())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .kill_on_drop(false); // We manage child lifecycle ourselves via terminate_locked.
@@ -248,14 +276,14 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<(Strin
     // out the watchdog or shutdown.
     drop(guard);
 
-    wait_for_health(port).await.inspect_err(|_| {
+    if let Err(e) = wait_for_health(port).await {
         // Health failed — tear down whatever we just spawned so the next
-        // request gets a clean retry.
-        if let Some(mtx) = STATE.get() {
-            let mut g = mtx.blocking_lock();
-            terminate_locked(&mut g);
-        }
-    })?;
+        // request gets a clean retry. Must re-acquire the lock with `.await`:
+        // we're inside an async context, where `blocking_lock()` panics.
+        let mut g = state().lock().await;
+        terminate_async(&mut g);
+        return Err(e);
+    }
 
     Ok((format!("http://127.0.0.1:{port}"), api_key))
 }
@@ -266,22 +294,41 @@ pub async fn ensure_running(app: &AppHandle, model_path: &Path) -> Result<(Strin
 pub fn shutdown_blocking() {
     let Some(mtx) = STATE.get() else { return };
     let mut guard = mtx.blocking_lock();
-    terminate_locked(&mut guard);
-}
-
-fn terminate_locked(guard: &mut Inner) {
-    let prev = std::mem::replace(guard, Inner::Idle);
+    let prev = std::mem::replace(&mut *guard, Inner::Idle);
     if let Inner::Running { pid, mut child, .. } = prev {
-        log::info!("terminating llama-server pid {pid}");
-        // SIGTERM first.
+        log::info!("terminating llama-server pid {pid} (exit)");
+        // SIGTERM gives llama.cpp a chance to release Metal handles, then
+        // SIGKILL as a backstop. We deliberately do NOT sleep here: this runs
+        // on the app-exit / auto-update-relaunch path, and a multi-second
+        // grace period stalls quit. The process is dying regardless, so the
+        // OS reclaims everything the moment we exit.
         unsafe {
             libc::kill(pid as i32, libc::SIGTERM);
         }
-        // Brief grace period for clean shutdown, then SIGKILL via tokio's
-        // start_kill (synchronous, only signals — no async wait needed here
-        // because we're already on the shutdown path).
-        std::thread::sleep(SIGTERM_GRACE);
         let _ = child.start_kill();
+    }
+}
+
+/// Reset the supervisor to `Idle` and reap the child without blocking the
+/// caller: SIGTERM now, then SIGKILL + `wait()` after a grace period from a
+/// detached task. Safe to call from async contexts (idle watchdog,
+/// health-check failure, dead-sidecar recovery) — unlike a blocking sleep,
+/// it never holds the supervisor mutex or a runtime worker across the grace.
+fn terminate_async(guard: &mut Inner) {
+    let prev = std::mem::replace(guard, Inner::Idle);
+    if let Inner::Running { pid, mut child, .. } = prev {
+        log::info!("terminating llama-server pid {pid}");
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+        tauri::async_runtime::spawn(async move {
+            sleep(SIGTERM_GRACE).await;
+            // If SIGTERM already brought it down, start_kill is a no-op;
+            // either way `wait()` reaps the child so it doesn't linger as a
+            // zombie until the parent exits.
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        });
     }
 }
 

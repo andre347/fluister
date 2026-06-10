@@ -35,18 +35,26 @@ impl Recorder {
         Self { tx, samples, config, level }
     }
 
-    pub fn start(&self) -> Result<()> {
+    /// Enqueue stream start and return a receiver for the result. The send is
+    /// cheap and synchronous, so callers on the CGEventTap thread can enqueue
+    /// Start *in order* (strictly before any later Stop) without blocking on
+    /// the device actually opening — which can take up to ~1 s for a Bluetooth
+    /// mic. Await `recv()` off the tap thread to learn whether it succeeded.
+    pub fn start(&self) -> std::sync::mpsc::Receiver<Result<()>> {
         self.samples.lock().clear();
         *self.config.lock() = None;
         self.level.store(0, Ordering::Relaxed);
         let (rtx, rrx) = channel();
-        self.tx
-            .send(Cmd::Start(rtx))
-            .map_err(|_| anyhow!("audio thread gone"))?;
-        rrx.recv().map_err(|_| anyhow!("audio thread closed"))?
+        // If the audio thread is gone the send drops `rtx`; the caller's
+        // `recv()` then errors, which we surface as a start failure.
+        let _ = self.tx.send(Cmd::Start(rtx));
+        rrx
     }
 
-    pub fn stop(&self) -> Result<Vec<f32>> {
+    /// Stop the stream and return the raw captured samples plus their source
+    /// rate/channels. Resampling to mono 16 kHz is left to the caller
+    /// (`to_mono_16k`) so the potentially heavy pass runs off the tap thread.
+    pub fn stop(&self) -> Result<(Vec<f32>, u32, u16)> {
         let (rtx, rrx) = channel();
         self.tx
             .send(Cmd::Stop(rtx))
@@ -58,7 +66,7 @@ impl Recorder {
             .config
             .lock()
             .ok_or_else(|| anyhow!("never started"))?;
-        Ok(to_mono_16k(&raw, rate, channels))
+        Ok((raw, rate, channels))
     }
 
     pub fn level(&self) -> f32 {
@@ -178,7 +186,7 @@ fn build_stream(
     Ok(stream)
 }
 
-fn to_mono_16k(samples: &[f32], rate: u32, channels: u16) -> Vec<f32> {
+pub fn to_mono_16k(samples: &[f32], rate: u32, channels: u16) -> Vec<f32> {
     if samples.is_empty() {
         return Vec::new();
     }

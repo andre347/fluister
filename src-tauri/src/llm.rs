@@ -23,7 +23,14 @@ pub async fn cleanup(
 ) -> Result<String> {
     match settings.llm_backend.as_str() {
         BACKEND_EXTERNAL_OLLAMA => {
-            ollama::cleanup(text, &settings.ollama_model, language, extra_style).await
+            ollama::cleanup(
+                text,
+                &settings.ollama_model,
+                language,
+                extra_style,
+                &settings.cleanup_level,
+            )
+            .await
         }
         _ => bundled_cleanup(app, settings, text, language, extra_style).await,
     }
@@ -57,10 +64,24 @@ async fn bundled_cleanup(
     let fillers = llm_prompt::fillers_for(language);
     let delimiter = llm_prompt::make_delimiter();
 
-    let system = llm_prompt::make_cleanup_system_message(lang_name);
-    let user_msg =
-        llm_prompt::make_cleanup_user_message(text, lang_name, fillers, extra_style, &delimiter);
-    let num_predict = llm_prompt::estimate_num_predict(text);
+    let level = llm_prompt::CleanupLevel::parse(&settings.cleanup_level);
+    let system = llm_prompt::make_cleanup_system_message(lang_name, level);
+    let user_msg = llm_prompt::make_cleanup_user_message(
+        text,
+        lang_name,
+        fillers,
+        extra_style,
+        &delimiter,
+        level,
+    );
+    let num_predict = match llm_prompt::cleanup_budget(text, llama_server::CTX_SIZE) {
+        llm_prompt::CleanupBudget::Fits { num_predict } => num_predict,
+        llm_prompt::CleanupBudget::TooLong => {
+            return Err(anyhow!(
+                "This text is too long for the cleanup model's context window."
+            ));
+        }
+    };
 
     // llama-server's OpenAI-compatible /v1/chat/completions endpoint.
     // `max_tokens` is the OpenAI-equivalent of Ollama's `num_predict`.
